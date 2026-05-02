@@ -8,22 +8,22 @@
 
 </head>
 <body>
-  <div class="layout">
-    <aside>
-      <label class="settings-row" style="margin-bottom:12px;">
+  <div class="layout app-shell">
+    <aside class="control-rail">
+      <label class="settings-row sidebar-date-toggle">
         <input type="checkbox" id="filter-by-date" checked />
         <span class="filter-by-date-label">FILTER BY DATE</span>
       </label>
       <details class="wireframe-panel" id="scrape-wireframe" open>
         <summary class="wireframe-header" title="Click to expand/collapse">
-          <div class="wireframe-title" style="display:flex; align-items:center; gap:6px; white-space:nowrap;">
-            <span id="header-range-label" class="detail-meta" style="font-size:12px; white-space:nowrap;"></span>
+          <div class="wireframe-title wireframe-title-inline">
+            <span id="header-range-label" class="detail-meta detail-meta-compact"></span>
           </div>
           <span class="wireframe-carat">▾</span>
         </summary>
         <div class="wireframe-body" id="scrape-wireframe-body">
           <div class="date-range-panel">
-            <div class="calendar-card" id="calendar-card" style="height:100%; position:relative;">
+            <div class="calendar-card calendar-card-range" id="calendar-card">
               <div class="calendar-label">
                 <div class="calendar-meta">
                   <button type="button" class="calendar-today-btn" data-cal-today="range">Today</button>
@@ -35,27 +35,27 @@
                 </div>
               </div>
               <div class="calendar-grid" id="calendar-range"></div>
-              <div style="font-size:12px; color:var(--muted); text-align:left; margin-top:auto; padding-left:4px; display:flex; flex-direction:column; gap:8px;">
-                <span style="letter-spacing:0.3px;">SHIFT-CLICK TO SELECT RANGE</span>
-                <span style="display:grid; grid-template-columns:18px 1fr; align-items:center; gap:6px; margin-top:2px;">
-                  <span style="display:inline-block; width:14px; height:14px; border-radius:999px; background:rgba(100,168,255,0.28);"></span>
+              <div class="calendar-help">
+                <span class="eyebrow-label">SHIFT-CLICK TO SELECT RANGE</span>
+                <span class="calendar-legend">
+                  <span class="legend-swatch legend-swatch-populated"></span>
                   <span>Populated</span>
-                  <span style="display:inline-block; width:6px; height:6px; border-radius:999px; background:#ff5f5f; border:1px solid rgba(0,0,0,0.25); margin-left:2px;"></span>
+                  <span class="legend-swatch legend-swatch-unseen"></span>
                   <span>Unseen</span>
                 </span>
-                <button id="select-month-btn" class="button" style="background:var(--panel); border:1px solid var(--border); color:var(--text); padding:6px 10px; font-size:12px; line-height:1; align-self:flex-start;">Select entire month</button>
+                <button id="select-month-btn" class="button button-sm button-secondary align-start">Select entire month</button>
               </div>
             </div>
-            <div class="calendar-card" style="min-height:100%; display:flex; flex-direction:column; gap:8px;">
-              <div style="display:grid; gap:8px;">
-                <div style="font-size:12px; color:var(--muted);">SELECTED DATE RANGE:</div>
-                <button id="populate-range" class="button" style="background:rgba(100,168,255,0.35); border-color:rgba(100,168,255,0.6); color:#fff;">Populate release list</button>
+            <div class="calendar-card calendar-actions-card">
+              <div class="control-stack">
+                <div class="section-kicker">SELECTED DATE RANGE:</div>
+                <button id="populate-range" class="button button-primary">Populate release list</button>
                 <button id="preload-range" class="button">Preload release data</button>
-                <button id="mark-seen" class="button" style="padding:6px 10px; font-size:12px;">Mark as seen</button>
-                <button id="mark-unseen" class="button" style="padding:6px 10px; font-size:12px;">Mark as unseen</button>
+                <button id="mark-seen" class="button button-sm">Mark as seen</button>
+                <button id="mark-unseen" class="button button-sm">Mark as unseen</button>
               </div>
             </div>
-            <div style="display:none;">
+            <div class="is-hidden">
               <input type="text" id="date-filter-from" />
               <input type="text" id="date-filter-to" />
             </div>
@@ -69,47 +69,47 @@
     <main>
       <header>
         <div class="header-bar">
-          <div style="display:flex; flex-direction:column; gap:4px;">
+          <div class="brand-block">
             <h1>bcfeed v1.0</h1>
           </div>
-          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-            <span style="font-size:12px; color:var(--muted); font-weight:600; letter-spacing:0.2px;">SHOW ONLY:</span>
+          <div class="top-actions">
+            <span class="toolbar-label">SHOW ONLY:</span>
             <button id="hide-viewed-btn" class="button toggle-button" aria-pressed="false">Unseen</button>
             <button id="show-starred-btn" class="button toggle-button" aria-pressed="false">Starred</button>
-            <button id="settings-btn" class="button" aria-label="Settings" title="Settings" style="padding:6px 10px; font-size:18px;">⚙️</button>
-            <a href="readme" class="button" aria-label="Help" title="Help" target="_blank" rel="noopener" style="padding:6px 10px; font-size:18px;">?</a>
+            <button id="settings-btn" class="button button-icon" aria-label="Settings" title="Settings">⚙️</button>
+            <a href="readme" class="button button-icon" aria-label="Help" title="Help" target="_blank" rel="noopener">?</a>
           </div>
         </div>
       </header>
-      <div id="loading-state" class="status-bar" style="justify-content:center;">Loading releases…</div>
-      <div id="error-state" class="status-bar" style="display:none; border-color:#b83a3a; color:#ffc5c5; background:rgba(184,58,58,0.1); justify-content:center;"></div>
+      <div id="loading-state" class="status-bar status-bar-centered">Loading releases…</div>
+      <div id="error-state" class="status-bar status-bar-centered notice notice-danger is-hidden"></div>
       <div class="table-wrapper">
         <table aria-label="Bandcamp releases">
           <thead>
             <tr>
-              <th style="width:24px;"></th>
-              <th style="width:34px; text-align:center;"> </th>
-              <th data-sort="page_name" style="min-width:100px; max-width:180px;">Label/Page <span class="sort-indicator"></span></th>
-              <th data-sort="artist" style="min-width:120px; max-width:180px;">Artist <span class="sort-indicator"></span></th>
-              <th data-sort="title" style="min-width:280px; max-width:560px;">Title <span class="sort-indicator"></span></th>
-              <th data-sort="date" style="width:120px; min-width:120px; max-width:120px;">Date <span class="sort-indicator"></span></th>
+              <th class="col-marker"></th>
+              <th class="col-star"> </th>
+              <th class="col-label" data-sort="page_name">Label/Page <span class="sort-indicator"></span></th>
+              <th class="col-artist" data-sort="artist">Artist <span class="sort-indicator"></span></th>
+              <th class="col-title" data-sort="title">Title <span class="sort-indicator"></span></th>
+              <th class="col-date" data-sort="date">Date <span class="sort-indicator"></span></th>
             </tr>
           </thead>
           <tbody id="release-rows"></tbody>
         </table>
-        <div id="empty-state" class="empty-state" style="display: none;">No releases match the current filter.</div>
+        <div id="empty-state" class="empty-state is-hidden">No releases match the current filter.</div>
       </div>
-      <div class="calendar-log" style="width:100%;">
-        <div class="calendar-label" style="justify-content:flex-start; gap:8px;">
-          <span style="font-weight:600;">Status</span>
+      <div class="calendar-log">
+        <div class="calendar-label status-log-header">
+          <span class="status-log-title">Status</span>
           <button type="button" id="status-toggle" class="button status-toggle" aria-expanded="true">
             <span class="status-carat">▾</span>
           </button>
         </div>
-        <div id="populate-log" class="scrollbox" style="width:100%;"></div>
+        <div id="populate-log" class="scrollbox"></div>
       </div>
       <div class="status-bar">
-        <span id="header-count-label" class="detail-meta" style="font-size:12px; white-space:nowrap;"></span>
+        <span id="header-count-label" class="detail-meta detail-meta-compact"></span>
       </div>
     </main>
   </div>
@@ -128,11 +128,11 @@
           <div class="settings-group">
             <div class="settings-row">
               <input type="checkbox" id="theme-toggle" class="filter-checkbox show" />
-              <label for="theme-toggle" style="cursor:pointer;">Dark mode</label>
+              <label for="theme-toggle" class="clickable-label">Dark mode</label>
             </div>
             <div class="settings-row">
               <input type="checkbox" id="show-cached-toggle" class="filter-checkbox show" checked />
-              <label for="show-cached-toggle" style="cursor:pointer;">Show cached badges</label>
+              <label for="show-cached-toggle" class="clickable-label">Show cached badges</label>
             </div>
           </div>
         </div>
@@ -150,31 +150,31 @@
               </div>
 
               <!-- Gmail Config Panel -->
-              <div id="gmail-config-panel" class="provider-panel" style="display:none;">
-                  <div style="margin-bottom:12px; font-size:13px; color:var(--muted); line-height:1.4;">
+              <div id="gmail-config-panel" class="provider-panel is-hidden">
+                  <div class="form-help-block">
                       Connect using the official Google API. Requires a <code>client_secret.json</code> file.
                   </div>
                   <div class="settings-actions">
                       <button id="load-creds-btn" class="button primary">Load credentials file</button>
                       <button id="clear-creds-btn" class="button">Clear credentials</button>
                       <!-- Hidden file input needs to stay -->
-                      <input type="file" id="load-creds-file" accept="application/json" style="display:none;" />
+                      <input type="file" id="load-creds-file" accept="application/json" class="is-hidden" />
                   </div>
-                  <div style="margin-top:12px; border-top:1px solid var(--border); padding-top:12px;">
-                      <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener noreferrer" class="button danger" style="text-decoration:none; display:inline-block;">Revoke Gmail Authorization</a>
+                  <div class="provider-subsection">
+                      <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener noreferrer" class="button button-danger inline-button">Revoke Gmail Authorization</a>
                       <div class="help-text">Revokes access on Google's side. To remove local tokens, use "Clear credentials".</div>
                   </div>
               </div>
 
               <!-- IMAP Config Panel -->
-              <div id="imap-config-panel" class="provider-panel" style="display:none;">
+              <div id="imap-config-panel" class="provider-panel is-hidden">
                   <div class="help-text imap-intro-text">
                       Enter your IMAP connection details, load the available folders, then choose which folder should be scanned for Bandcamp release emails.
                   </div>
 
-                  <div style="display: flex; gap: 24px; align-items: flex-start;">
+                  <div class="settings-columns">
                       <!-- Left Column: Server, User -->
-                      <div style="flex: 1; display: flex; flex-direction: column; gap: 15px;">
+                      <div class="settings-column">
                           <div>
                               <label for="imap-host" class="form-label">Server</label>
                               <input type="text" id="imap-host" class="form-input" placeholder="imap.example.com" />
@@ -186,17 +186,17 @@
                       </div>
 
                       <!-- Right Column: Port/SSL, Password -->
-                      <div style="flex: 1; display: flex; flex-direction: column; gap: 15px;">
+                      <div class="settings-column">
                           <!-- Security & Port Group -->
-                          <div style="display: flex; gap: 12px;">
-                              <div style="flex: 7;">
+                          <div class="form-split">
+                              <div class="form-split-wide">
                                   <label for="imap-ssl" class="form-label">Security</label>
                                   <select id="imap-ssl" class="form-select">
                                       <option value="ssl">SSL/TLS</option>
                                       <option value="none">None</option>
                                   </select>
                               </div>
-                              <div style="flex: 3; min-width: 85px;">
+                              <div class="form-split-narrow">
                                   <label for="imap-port" class="form-label">Port</label>
                                   <input type="number" id="imap-port" class="form-input" value="993" />
                               </div>
@@ -204,9 +204,9 @@
 
                           <!-- Password Group -->
                           <div>
-                              <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">
-                                  <label for="imap-pass" class="form-label" style="margin-bottom:0;">Password</label>
-                                  <span title="Some providers require an app-specific password for IMAP access. Check your provider's documentation." style="cursor: help; color: var(--text); opacity: 0.7; display: flex; align-items: center;">
+                              <div class="label-with-help">
+                                  <label for="imap-pass" class="form-label form-label-inline">Password</label>
+                                  <span class="help-icon" title="Some providers require an app-specific password for IMAP access. Check your provider's documentation.">
                                       <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
                                   </span>
                               </div>
@@ -215,7 +215,7 @@
                       </div>
                   </div>
 
-                  <div class="settings-actions imap-action-row" style="margin-top:16px;">
+                  <div class="settings-actions imap-action-row form-section-gap">
                       <button id="imap-discover" class="button primary">Connect &amp; load folders</button>
                       <div id="imap-discover-status" class="help-text imap-status-text"></div>
                   </div>
@@ -233,7 +233,7 @@
 
                       <button id="imap-folder-manual-toggle" class="button" type="button">Enter folder manually</button>
 
-                      <div id="imap-folder-manual-wrap" style="display:none;">
+                      <div id="imap-folder-manual-wrap" class="is-hidden">
                           <label for="imap-folder-manual" class="form-label">Manual Folder Name</label>
                           <input type="text" id="imap-folder-manual" class="form-input" placeholder="Folder name" />
                           <div class="help-text">Use this only if your mail provider does not expose the folder in the list above.</div>
@@ -253,7 +253,7 @@
         <div class="settings-section">
           <div class="settings-section-title">Data & Storage</div>
           <div class="settings-group">
-            <div style="font-size:13px; color:var(--muted); line-height:1.4;">
+            <div class="form-help-block">
                 Clear all cached release data, images, and viewing history. Your settings and credentials will be preserved.
             </div>
             <div class="settings-actions">
@@ -273,19 +273,19 @@
   </div>
   <div id="missing-token-backdrop" class="settings-backdrop">
     <div class="missing-token-modal">
-      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+      <div class="modal-header-row">
         <h2>Credentials Needed</h2>
         <button id="missing-token-close" class="button" aria-label="Close">✕</button>
       </div>
       <p>Email credentials not configured. Configure your provider settings in the Settings panel to continue.</p>
-      <div style="display:flex; justify-content:flex-end;">
+      <div class="modal-actions">
         <button id="missing-token-continue" class="button">Continue</button>
       </div>
     </div>
   </div>
   <div id="load-creds-backdrop" class="settings-backdrop">
     <div class="missing-token-modal">
-      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+      <div class="modal-header-row">
         <h2>Load Credentials</h2>
         <button id="load-creds-close" class="button" aria-label="Close">✕</button>
       </div>
@@ -294,8 +294,21 @@
       <p>This must be downloaded from Google Cloud.</p>
       <p>For instructions on how to get this file, please refer to the setup instructions:</p>
       <p><a class="link" href="setup-gmail" target="_blank" rel="noopener">Show setup instructions</a></p>
-      <div style="display:flex; justify-content:flex-end;">
+      <div class="modal-actions">
         <button id="load-creds-continue" class="button">Continue</button>
+      </div>
+    </div>
+  </div>
+  <div id="reset-confirm-backdrop" class="settings-backdrop">
+    <div class="missing-token-modal">
+      <div class="modal-header-row">
+        <h2>Clear Cached Data?</h2>
+        <button id="reset-confirm-close" class="button" aria-label="Close">✕</button>
+      </div>
+      <p>This clears cached release data, images, viewed releases, and starred releases. Provider settings and credentials are preserved.</p>
+      <div class="modal-actions modal-actions-split">
+        <button id="reset-confirm-cancel" class="button">Cancel</button>
+        <button id="reset-confirm-run" class="button button-danger">Clear cache</button>
       </div>
     </div>
   </div>

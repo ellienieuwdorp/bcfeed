@@ -68,10 +68,27 @@
     }
     const loadingState = document.getElementById("loading-state");
     const errorState = document.getElementById("error-state");
+    function setVisible(element, visible, mode = "block") {
+      if (!element) return;
+      element.classList.toggle("is-hidden", !visible);
+      element.classList.toggle("is-flex", visible && mode === "flex");
+      element.classList.toggle("is-block", visible && mode === "block");
+    }
+    function setLogTone(tone = "muted") {
+      if (!populateLog) return;
+      populateLog.classList.toggle("is-accent", tone === "accent");
+      populateLog.classList.toggle("is-muted", tone === "muted");
+    }
+    function notify(message, tone = "muted") {
+      const msg = String(message || "");
+      if (!msg) return;
+      appendPopulateLogLine(msg);
+      setLogTone(tone === "error" ? "accent" : tone);
+    }
     function applyDevSettingsVisibility() {
       const devEls = document.querySelectorAll(".dev-setting");
       devEls.forEach((el) => {
-        el.style.display = showDevSettings ? "" : "none";
+        setVisible(el, showDevSettings);
       });
     }
     if (populateLog && clearStatusOnLoad) {
@@ -84,23 +101,23 @@
     function setLoading(message = "Loading releases…") {
       if (loadingState) {
         loadingState.textContent = message;
-        loadingState.style.display = "flex";
+        setVisible(loadingState, true, "flex");
       }
-      if (errorState) errorState.style.display = "none";
+      setVisible(errorState, false);
     }
     function hideLoading() {
-      if (loadingState) loadingState.style.display = "none";
+      setVisible(loadingState, false);
     }
     function showError(message) {
       hideLoading();
       if (errorState) {
         errorState.textContent = message || "Failed to load releases. Is the bcfeed proxy running?";
-        errorState.style.display = "flex";
+        setVisible(errorState, true, "flex");
       }
       const tableWrapper = document.querySelector(".table-wrapper");
-      if (tableWrapper) tableWrapper.style.display = "none";
+      setVisible(tableWrapper, false);
       const wireframe = document.getElementById("scrape-wireframe");
-      if (wireframe) wireframe.style.display = "none";
+      setVisible(wireframe, false);
     }
     async function loadViewedSet() {
       if (!apiRoot) throw new Error("Proxy not configured");
@@ -136,17 +153,17 @@
       if (serverDownShown) return;
       serverDownShown = true;
       if (serverDownBackdrop) {
-        serverDownBackdrop.style.display = "flex";
+        setVisible(serverDownBackdrop, true, "flex");
       }
     }
     function showMaxResultsModal() {
       if (maxResultsBackdrop) {
-        maxResultsBackdrop.style.display = "flex";
+        setVisible(maxResultsBackdrop, true, "flex");
       }
     }
     function hideMaxResultsModal() {
       if (maxResultsBackdrop) {
-        maxResultsBackdrop.style.display = "none";
+        setVisible(maxResultsBackdrop, false);
       }
     }
     function appendPopulateLogLine(msg) {
@@ -317,15 +334,16 @@
             const msg = data.error || "Failed to clear credentials.";
             const next = joinedLogs ? `${msg}\n${joinedLogs}` : msg;
             if (populateLog) populateLog.textContent = next;
-            alert(msg);
+            notify(msg, "error");
           } else {
             const msg = joinedLogs || "Credentials reloaded.";
             if (populateLog) populateLog.textContent = msg;
+            notify(msg, "success");
           }
         } catch (err) {
           const msg = String(err || "Failed to load credentials.");
           if (populateLog) populateLog.textContent = msg;
-          alert(msg);
+          notify(msg, "error");
         } finally {
           clearCredsBtn.disabled = false;
           clearCredsBtn.textContent = original || "Clear credentials";
@@ -352,16 +370,16 @@
             const msg = data.error || "Failed to load credentials.";
             const next = joinedLogs ? `${msg}\n${joinedLogs}` : msg;
             if (populateLog) populateLog.textContent = next;
-            alert(msg);
+            notify(msg, "error");
           } else {
             const msg = joinedLogs || "Credentials loaded and authenticated.";
             if (populateLog) populateLog.textContent = msg;
-            alert("Credentials loaded.");
+            notify("Credentials loaded.", "success");
           }
         } catch (err) {
           const msg = String(err || "Failed to load credentials.");
           if (populateLog) populateLog.textContent = msg;
-          alert(msg);
+          notify(msg, "error");
         } finally {
           loadCredsBtn.disabled = false;
           loadCredsBtn.textContent = original || "Load credentials";
@@ -375,14 +393,14 @@
       };
       const showLoadCredsModal = () => {
         if (loadCredsBackdrop) {
-          loadCredsBackdrop.style.display = "flex";
+          setVisible(loadCredsBackdrop, true, "flex");
         } else {
           openLoadCredsFile();
         }
       };
       const hideLoadCredsModal = () => {
         if (loadCredsBackdrop) {
-          loadCredsBackdrop.style.display = "none";
+          setVisible(loadCredsBackdrop, false);
         }
         openLoadCredsFile();
       };
@@ -466,10 +484,13 @@
       const labels = Object.keys(counts)
         .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
       const container = document.getElementById("label-filters");
-      container.innerHTML = "";
+      container.replaceChildren();
 
       if (labels.length === 0) {
-        container.innerHTML = "<div class='detail-meta'>No label/page data available.</div>";
+        const empty = document.createElement("div");
+        empty.className = "empty-inline";
+        empty.textContent = "No label/page data available.";
+        container.appendChild(empty);
         return;
       }
 
@@ -492,6 +513,10 @@
         showCheckbox.type = "checkbox";
         showCheckbox.className = "filter-checkbox show";
         showCheckbox.dataset.filterRole = "show";
+        showCheckbox.title = showOnlyMode
+          ? "Disabled while Show only filters are active"
+          : `Include ${label} in the release list`;
+        showCheckbox.setAttribute("aria-label", `Include ${label}`);
         showCheckbox.checked = state.showLabels.has(label);
         showCheckbox.disabled = showOnlyMode;
         showCheckbox.addEventListener("change", () => {
@@ -507,6 +532,8 @@
         showOnlyCheckbox.type = "checkbox";
         showOnlyCheckbox.className = "filter-checkbox show-only";
         showOnlyCheckbox.dataset.filterRole = "show-only";
+        showOnlyCheckbox.title = `Show only releases from ${label}`;
+        showOnlyCheckbox.setAttribute("aria-label", `Show only ${label}`);
         showOnlyCheckbox.checked = state.showOnlyLabels.has(label);
         showOnlyCheckbox.addEventListener("change", () => {
           if (showOnlyCheckbox.checked) {
@@ -564,14 +591,16 @@
         ? `Selected time period:\n\n${fromVal} to ${toVal}\n\nDate range fully populated. Displaying all releases in this date range.`
         : `Selected time period:\n\n${fromVal} to ${toVal}\n\n${totalDays-populatedDays} of ${totalDays} selected days not yet populated.\n\nClick "Populate release list" to populate all dates in the selected range.`; 
 
-        populateLog.innerHTML = msg.replace(/\n/g, "<br>");
-        populateLog.style.color = allPopulated ? "var(--muted)" : "#64a8ff";
+        populateLog.replaceChildren(document.createTextNode(msg));
+        setLogTone(allPopulated ? "muted" : "accent");
         
         const rangeReleases = releases.filter(r => withinSelectedRange(r) && r.url);
         const hasPreloadableReleases = rangeReleases.some(r => !(r.embed_url && r.description));
         if (allPopulated && hasPreloadableReleases) {
-          msg = `\n\n<span style="color:#64a8ff;">For faster browsing, "Star" the releases you're interested in to pre-load their Bandcamp player widgets, then filter using the "Starred" button at the top right.\n\nYou can also click 'Preload release data' to pre-fetch Bandcamp players for all releases in this date range.</span>`;
-          populateLog.innerHTML += msg.replace(/\n/g, "<br>");
+          const callout = document.createElement("span");
+          callout.className = "log-callout";
+          callout.textContent = `\n\nFor faster browsing, "Star" the releases you're interested in to pre-load their Bandcamp player widgets, then filter using the "Starred" button at the top right.\n\nYou can also click 'Preload release data' to pre-fetch Bandcamp players for all releases in this date range.`;
+          populateLog.appendChild(callout);
         }
       }
 
@@ -649,8 +678,6 @@
           preloadBtn.textContent = "Preload release data";
           preloadBtn.title = "Preload unavailable";
         }
-        preloadBtn.style.opacity = preloadBtn.disabled ? "0.6" : "1";
-        preloadBtn.style.cursor = preloadBtn.disabled ? "not-allowed" : "pointer";
       }
     }
 
@@ -701,6 +728,10 @@
 
       td.innerHTML = `
         <div class="detail-card">
+          <div class="detail-header">
+            <span class="detail-meta">Release details</span>
+            <button type="button" class="button button-sm button-quiet" data-detail-close>Collapse</button>
+          </div>
           <div class="detail-body">
             <div class="embed-wrapper" data-embed-target>
               <div class="detail-meta">Loading player…</div>
@@ -718,12 +749,20 @@
           dataRow.focus();
         }
       });
+      const closeButton = td.querySelector("[data-detail-close]");
+      if (closeButton) {
+        closeButton.addEventListener("click", (evt) => {
+          evt.stopPropagation();
+          closeOpenDetailRows();
+          state.expandedKey = null;
+        });
+      }
       return tr;
     }
 
     function renderTable() {
       const tbody = document.getElementById("release-rows");
-      tbody.innerHTML = "";
+      tbody.replaceChildren();
       closeOpenDetailRows();
 
       const dateFiltered = releases.filter(r => withinSelectedRange(r));
@@ -747,7 +786,7 @@
       });
 
       const sorted = sortData(filtered);
-      document.getElementById("empty-state").style.display = sorted.length ? "none" : "block";
+      setVisible(document.getElementById("empty-state"), sorted.length === 0, "block");
 
       sorted.forEach(release => {
         const tr = document.createElement("tr");
@@ -757,8 +796,8 @@
         tr.dataset.page = release.page_name || "";
         tr.tabIndex = 0;
         tr.innerHTML = `
-          <td style="width:24px;"><span class="row-dot"></span></td>
-          <td style="width:34px; text-align:center;">
+          <td class="col-marker"><span class="row-dot"></span></td>
+          <td class="col-star">
             <button type="button" class="star-btn" data-star-btn aria-label="Star this release" aria-pressed="false" title="Star this release">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"></path>
@@ -801,7 +840,7 @@
           tr.focus();
           const existingDetail = tr.nextElementSibling;
           const hasDetail = existingDetail && existingDetail.classList.contains("detail-row");
-          const wasVisible = hasDetail && existingDetail.style.display !== "none";
+          const wasVisible = hasDetail && !existingDetail.classList.contains("is-hidden");
 
           // If already visible, toggle closed.
           if (wasVisible) {
@@ -820,7 +859,7 @@
           } else {
             // ensure adjacency and show
             tr.after(detail);
-            detail.style.display = "";
+            detail.classList.remove("is-hidden");
           }
           tr.classList.add("expanded");
           state.expandedKey = key;
@@ -843,8 +882,8 @@
                 embedTarget.innerHTML = `<div class="detail-meta">No embed available. Is the app still running? <br><a class="link" href="${release.url || "#"}" target="_blank" rel="noopener">Open on Bandcamp</a>.</div>`;
                 return;
               }
-            const height = release.is_track ? 320 : 480;
-            embedTarget.innerHTML = `<iframe title="Bandcamp player" style="border:0; width:100%; height:${height}px;" src="${embedUrl}" seamless></iframe>`;
+            const frameClass = release.is_track ? "embed-frame embed-frame-track" : "embed-frame embed-frame-album";
+            embedTarget.innerHTML = `<iframe title="Bandcamp player" class="${frameClass}" src="${embedUrl}" seamless></iframe>`;
             markCachedBadge(tr, release);
             if (descTarget) {
               descTarget.textContent = release.description || "No description available.";
@@ -940,12 +979,11 @@
       document.querySelectorAll("th[data-sort]").forEach(th => {
         const indicator = th.querySelector(".sort-indicator");
         const key = th.dataset.sort;
+        th.classList.toggle("is-active-sort", state.sortKey === key);
         if (state.sortKey === key) {
           indicator.textContent = state.direction === "asc" ? "▲" : "▼";
-          th.style.color = "var(--text)";
         } else {
           indicator.textContent = "";
-          th.style.color = "var(--muted)";
         }
       });
     }
@@ -971,6 +1009,10 @@
     const settingsBtn = document.getElementById("settings-btn");
     const settingsClose = document.getElementById("settings-close");
     const settingsReset = document.getElementById("settings-reset");
+    const resetConfirmBackdrop = document.getElementById("reset-confirm-backdrop");
+    const resetConfirmClose = document.getElementById("reset-confirm-close");
+    const resetConfirmCancel = document.getElementById("reset-confirm-cancel");
+    const resetConfirmRun = document.getElementById("reset-confirm-run");
     const hideViewedBtn = document.getElementById("hide-viewed-btn");
     const showStarredBtn = document.getElementById("show-starred-btn");
     const markSeenBtn = document.getElementById("mark-seen");
@@ -1014,7 +1056,7 @@
 
     function toggleSettings(open) {
       if (!settingsBackdrop) return;
-      settingsBackdrop.style.display = open ? "flex" : "none";
+      setVisible(settingsBackdrop, open, "flex");
     }
     if (settingsBtn) settingsBtn.addEventListener("click", () => toggleSettings(true));
     if (settingsClose) settingsClose.addEventListener("click", () => toggleSettings(false));
@@ -1023,12 +1065,12 @@
     });
     const showMissingTokenModal = () => {
       if (missingTokenBackdrop) {
-        missingTokenBackdrop.style.display = "flex";
+        setVisible(missingTokenBackdrop, true, "flex");
       }
     };
     const hideMissingTokenModal = () => {
       if (missingTokenBackdrop) {
-        missingTokenBackdrop.style.display = "none";
+        setVisible(missingTokenBackdrop, false);
       }
       toggleSettings(true);
     };
@@ -1077,12 +1119,36 @@
       }
       toggleSettings(false);
       if (hadError && clearCache) {
-        alert("Could not clear disk cache (proxy not reachable). Run the app/proxy and try again.");
+        notify("Could not clear disk cache (proxy not reachable). Run the app/proxy and try again.", "error");
       } else {
         window.location.reload();
       }
     }
-    if (settingsReset) settingsReset.addEventListener("click", performReset);
+    function toggleResetConfirm(open) {
+      setVisible(resetConfirmBackdrop, open, "flex");
+    }
+    if (settingsReset) settingsReset.addEventListener("click", () => toggleResetConfirm(true));
+    if (resetConfirmClose) resetConfirmClose.addEventListener("click", () => toggleResetConfirm(false));
+    if (resetConfirmCancel) resetConfirmCancel.addEventListener("click", () => toggleResetConfirm(false));
+    if (resetConfirmBackdrop) {
+      resetConfirmBackdrop.addEventListener("click", (e) => {
+        if (e.target === resetConfirmBackdrop) toggleResetConfirm(false);
+      });
+    }
+    if (resetConfirmRun) {
+      resetConfirmRun.addEventListener("click", async () => {
+        resetConfirmRun.disabled = true;
+        const original = resetConfirmRun.textContent;
+        resetConfirmRun.textContent = "Clearing…";
+        try {
+          await performReset();
+        } finally {
+          resetConfirmRun.disabled = false;
+          resetConfirmRun.textContent = original || "Clear cache";
+          toggleResetConfirm(false);
+        }
+      });
+    }
 
     function refreshToggleButtons() {
       if (hideViewedBtn) {
@@ -1265,9 +1331,7 @@
         }
         if (hasUnseen) {
           const dot = document.createElement("span");
-          dot.className = "dot unseen";
-          dot.style.background = "#ff5f5f";
-          dot.style.borderColor = "rgba(0,0,0,0.25)";
+          dot.className = "dot unseen day-unseen-dot";
           cell.appendChild(dateLabel);
           const dots = document.createElement("div");
           dots.className = "dot-strip";
@@ -1426,7 +1490,7 @@
       if (startVal && !endVal) endVal = startVal;
       if (endVal && !startVal) startVal = endVal;
       if (!apiRoot || !startVal || !endVal) return;
-      if (populateLog) populateLog.style.color = "";
+      setLogTone("muted");
       const btn = triggerBtn || populateBtn;
       const original = btn ? btn.textContent : "";
       if (btn) {
@@ -1435,7 +1499,7 @@
       }
           async function runPopulate() {
             if (!window.EventSource) {
-              alert("Populate requires EventSource support. Please use a modern browser.");
+              notify("Populate requires EventSource support. Please use a modern browser.", "error");
               if (btn) {
                 btn.disabled = false;
                 btn.textContent = original || "Populate";
@@ -1457,7 +1521,7 @@
               const next = current ? `${current}\n${msg}` : msg;
               if (populateLog) populateLog.textContent = next;
               if (populateLog) populateLog.scrollTop = populateLog.scrollHeight;
-              alert(msg);
+              notify(msg, "error");
               if (btn) {
                 btn.disabled = false;
                 btn.textContent = original || "Populate";
@@ -1492,7 +1556,7 @@
 
     async function preloadEmbedsForRange() {
       if (!embedProxyUrl) {
-        alert("Embed proxy not configured.");
+        notify("Embed proxy not configured.", "error");
         return;
       }
       checkServerAlive();
@@ -1509,7 +1573,7 @@
         .filter(r => !(r.embed_url && r.description));
       const total = candidates.length;
       if (populateLog) {
-        populateLog.style.color = "";
+        setLogTone("muted");
         populateLog.textContent = total
           ? `Preloading embeds for ${total} releases…`
           : "Nothing to preload for this range.";
@@ -1619,6 +1683,9 @@
     }
 
     if (scrapePanel && scrapePanelBody) {
+      if (window.matchMedia && window.matchMedia("(max-width: 900px)").matches) {
+        scrapePanel.open = false;
+      }
       scrapePanelBody.hidden = !scrapePanel.open;
       scrapePanel.addEventListener("toggle", () => {
         scrapePanelBody.hidden = !scrapePanel.open;
@@ -1626,8 +1693,9 @@
     }
 
     if (statusLogCard && statusToggleBtn) {
-      statusLogCard.classList.remove("collapsed");
-      statusToggleBtn.setAttribute("aria-expanded", "true");
+      const collapseStatus = window.matchMedia && window.matchMedia("(max-width: 900px)").matches;
+      statusLogCard.classList.toggle("collapsed", collapseStatus);
+      statusToggleBtn.setAttribute("aria-expanded", String(!collapseStatus));
       statusToggleBtn.addEventListener("click", () => {
         const isCollapsed = statusLogCard.classList.toggle("collapsed");
         statusToggleBtn.setAttribute("aria-expanded", String(!isCollapsed));
@@ -1735,13 +1803,9 @@
     function setStatus(element, message, tone = "muted") {
       if (!element) return;
       element.textContent = message || "";
-      if (tone === "error") {
-        element.style.color = "#b83a3a";
-      } else if (tone === "success") {
-        element.style.color = "var(--accent)";
-      } else {
-        element.style.color = "var(--muted)";
-      }
+      element.classList.toggle("status-text-error", tone === "error");
+      element.classList.toggle("status-text-success", tone === "success");
+      element.classList.toggle("status-text-muted", tone !== "error" && tone !== "success");
     }
 
     function getImapConnectionPayload() {
@@ -1773,7 +1837,7 @@
     }
 
     function isImapManualFolderMode() {
-      return !!(imapFolderManualWrap && imapFolderManualWrap.style.display !== "none");
+      return !!(imapFolderManualWrap && !imapFolderManualWrap.classList.contains("is-hidden"));
     }
 
     function getSelectedImapFolder() {
@@ -1809,7 +1873,7 @@
 
     function setImapManualFolderMode(enabled, manualValue = "") {
       if (imapFolderManualWrap) {
-        imapFolderManualWrap.style.display = enabled ? "block" : "none";
+        setVisible(imapFolderManualWrap, enabled, "block");
       }
       if (imapFolderManualToggle) {
         imapFolderManualToggle.textContent = enabled ? "Use folder list" : "Enter folder manually";
@@ -1824,7 +1888,7 @@
     function resetImapFolderState() {
       imapState.loadedFingerprint = "";
       if (imapFolderSelect) {
-        imapFolderSelect.innerHTML = "";
+        imapFolderSelect.replaceChildren();
         const option = document.createElement("option");
         option.value = "";
         option.textContent = "Connect to load folders";
@@ -1843,7 +1907,7 @@
 
     function renderImapFolders(folders, selectedFolder, recommendedFolder) {
       if (!imapFolderSelect) return;
-      imapFolderSelect.innerHTML = "";
+      imapFolderSelect.replaceChildren();
 
       const placeholder = document.createElement("option");
       placeholder.value = "";
@@ -1943,8 +2007,8 @@
     function updateImapConfigVisibility() {
       if (!providerSelect) return;
       const isImap = providerSelect.value === "imap";
-      if (imapConfigPanel) imapConfigPanel.style.display = isImap ? "block" : "none";
-      if (gmailConfigPanel) gmailConfigPanel.style.display = isImap ? "none" : "block";
+      setVisible(imapConfigPanel, isImap, "block");
+      setVisible(gmailConfigPanel, !isImap, "block");
     }
 
     async function loadProviderConfig() {
