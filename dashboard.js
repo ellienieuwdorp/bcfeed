@@ -8,13 +8,6 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
   const releaseMap = new Map();
   let embedProxyUrl = "http://localhost:5050/embed-meta";
   let apiRoot = embedProxyUrl ? embedProxyUrl.replace(/\/embed-meta.*$/, "") : null;
-  const apiHost = (() => {
-    try {
-      return apiRoot ? new URL(apiRoot).hostname : null;
-    } catch {
-      return null;
-    }
-  })();
   let healthUrl = apiRoot ? `${apiRoot}/health` : null;
   let clearCredsUrl = apiRoot ? `${apiRoot}/clear-credentials` : null;
   let loadCredsUrl = apiRoot ? `${apiRoot}/load-credentials` : null;
@@ -23,11 +16,14 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
   let showDevSettings = false;
   let missingToken = false;
   const serverDownBackdrop = document.getElementById("server-down-backdrop");
+  const serverDownRetry = document.getElementById("server-down-retry");
   const maxResultsBackdrop = document.getElementById("max-results-backdrop");
   const missingTokenBackdrop = document.getElementById("missing-token-backdrop");
   const missingTokenClose = document.getElementById("missing-token-close");
   const missingTokenContinue = document.getElementById("missing-token-continue");
   let serverDownShown = false;
+  let healthFailureCount = 0;
+  const HEALTH_FAILURES_BEFORE_MODAL = 2;
   let maxNoticeShown = false;
   let defaultTheme = "light";
   const populateLog = document.getElementById("populate-log");
@@ -55,6 +51,14 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
   clearCredsUrl = apiRoot ? `${apiRoot}/clear-credentials` : null;
   loadCredsUrl = apiRoot ? `${apiRoot}/load-credentials` : null;
   starredApi = apiRoot ? `${apiRoot}/starred-state` : null;
+  // Single derivation point for the API host, after config has been applied.
+  const apiHost = (() => {
+    try {
+      return apiRoot ? new URL(apiRoot).hostname : null;
+    } catch {
+      return null;
+    }
+  })();
   if (config && config.default_theme) defaultTheme = config.default_theme;
   if (config && typeof config.clear_status_on_load !== "undefined") {
     clearStatusOnLoad = asBool(config.clear_status_on_load);
@@ -107,6 +111,13 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
     const wireframe = document.getElementById("scrape-wireframe");
     if (wireframe) wireframe.style.display = "none";
   }
+  // Non-blocking variant of showError: surfaces a message without hiding the
+  // table, for degraded-but-usable situations.
+  function showNotice(message) {
+    if (!errorState || !message) return;
+    errorState.textContent = message;
+    errorState.style.display = "flex";
+  }
   async function loadViewedSet() {
     if (!apiRoot) throw new Error("Proxy not configured");
     const resp = await fetch(`${apiRoot}/viewed-state`);
@@ -144,6 +155,13 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
       serverDownBackdrop.style.display = "flex";
     }
   }
+  function hideServerDownModal() {
+    if (!serverDownShown) return;
+    serverDownShown = false;
+    if (serverDownBackdrop) {
+      serverDownBackdrop.style.display = "none";
+    }
+  }
   function showMaxResultsModal() {
     if (maxResultsBackdrop) {
       maxResultsBackdrop.style.display = "flex";
@@ -162,7 +180,7 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
     populateLog.scrollTop = populateLog.scrollHeight;
   }
   async function checkServerAlive() {
-    if (!healthUrl || serverDownShown) return;
+    if (!healthUrl) return;
     const online = typeof navigator === "undefined" ? true : navigator.onLine;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 4000);
@@ -174,6 +192,9 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
       });
       clearTimeout(timer);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      // Healthy again: reset the failure streak and recover the UI.
+      healthFailureCount = 0;
+      hideServerDownModal();
     } catch (err) {
       clearTimeout(timer);
       if (!online) {
@@ -183,34 +204,56 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
       const isLocalHost =
         apiHost && ["localhost", "127.0.0.1", location.hostname].includes(apiHost);
       if (!isLocalHost) {
-        // Only count failures for remote hosts if the response was non-OK.
+        // Only watch the health of a locally-served app.
         return;
       }
-      showServerDownModal();
+      healthFailureCount += 1;
+      if (healthFailureCount >= HEALTH_FAILURES_BEFORE_MODAL) {
+        showServerDownModal();
+      }
     }
+  }
+  if (serverDownRetry) {
+    serverDownRetry.addEventListener("click", () => {
+      checkServerAlive();
+    });
+  }
+  let persistFailureNoted = false;
+  function notePersistFailure() {
+    if (persistFailureNoted) return;
+    persistFailureNoted = true;
+    appendPopulateLogLine(
+      "Couldn't save your latest seen/starred change — it may be lost after a reload.",
+    );
   }
   async function persistViewedRemote(url, isRead) {
     if (!apiRoot || !url) return;
     try {
-      await fetch(`${apiRoot}/viewed-state`, {
+      const resp = await fetch(`${apiRoot}/viewed-state`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url, read: isRead }),
       });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      persistFailureNoted = false;
     } catch (err) {
       console.warn("Failed to persist viewed state to API", err);
+      notePersistFailure();
     }
   }
   async function persistStarredRemote(url, starred) {
     if (!starredApi || !url) return;
     try {
-      await fetch(starredApi, {
+      const resp = await fetch(starredApi, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url, starred }),
       });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      persistFailureNoted = false;
     } catch (err) {
       console.warn("Failed to persist starred state to API", err);
+      notePersistFailure();
     }
   }
   function setViewed(release, isRead) {
@@ -223,6 +266,15 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
     }
     persistViewedRemote(release.url || key, isRead);
     renderCalendar("range");
+  }
+  // Single transition point for a row's read/unread presentation + state.
+  function setRowReadState(row, release, isRead) {
+    if (row) {
+      const dot = row.querySelector(".row-dot");
+      if (dot) dot.classList.toggle("read", isRead);
+      row.classList.toggle("unseen", !isRead);
+    }
+    setViewed(release, isRead);
   }
   function updateStarButton(button, isStarred) {
     if (!button) return;
@@ -392,10 +444,13 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
       if (loadCredsBackdrop) {
         loadCredsBackdrop.style.display = "none";
       }
+    };
+    const confirmLoadCredsModal = () => {
+      hideLoadCredsModal();
       openLoadCredsFile();
     };
     if (loadCredsClose) loadCredsClose.addEventListener("click", hideLoadCredsModal);
-    if (loadCredsContinue) loadCredsContinue.addEventListener("click", hideLoadCredsModal);
+    if (loadCredsContinue) loadCredsContinue.addEventListener("click", confirmLoadCredsModal);
     if (loadCredsBackdrop) {
       loadCredsBackdrop.addEventListener("click", (e) => {
         if (e.target === loadCredsBackdrop) hideLoadCredsModal();
@@ -409,7 +464,9 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
     });
   }
   if (maxResultsBackdrop) {
-    maxResultsBackdrop.addEventListener("click", hideMaxResultsModal);
+    maxResultsBackdrop.addEventListener("click", (e) => {
+      if (e.target === maxResultsBackdrop) hideMaxResultsModal();
+    });
   }
   function formatDate(value) {
     if (!value) return "";
@@ -426,6 +483,33 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
     return url;
   }
 
+  // Escape a release-derived string for interpolation into HTML text or
+  // attribute contexts. Release fields originate from third-party email
+  // content and scraped pages — never trust them as markup.
+  function esc(value) {
+    return String(value == null ? "" : value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  // Allow only absolute http(s) URLs for hrefs and iframe sources; anything
+  // else (javascript:, data:, relative junk) is rejected.
+  function safeHttpUrl(value) {
+    if (!value) return null;
+    try {
+      const parsed = new URL(String(value));
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+        return parsed.href;
+      }
+    } catch (err) {
+      // fall through
+    }
+    return null;
+  }
+
   let scrapeStatus = { scraped: new Set(), notScraped: new Set() };
 
   function buildEmbedUrl(id, isTrack) {
@@ -434,11 +518,20 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
     return `https://bandcamp.com/EmbeddedPlayer/${kind}=${id}/size=large/bgcol=ffffff/linkcol=0687f5/tracklist=true/artwork=small/transparent=true/`;
   }
 
+  // In-flight /embed-meta requests keyed by release URL, so hover + focus +
+  // click on the same row share one network fetch instead of racing.
+  const embedFetchesInFlight = new Map();
+
   async function ensureEmbed(release) {
-    if (release.embed_url && release.description) {
+    // Treat "embed_url present" as cached: rows whose page yields no
+    // description would otherwise be re-fetched on every render.
+    if (release.embed_url) {
       return release.embed_url;
     }
     if (!release.url || !embedProxyUrl) return null;
+
+    const pending = embedFetchesInFlight.get(release.url);
+    if (pending) return pending;
 
     const applyEmbedData = (data) => {
       if (!data) return null;
@@ -454,15 +547,21 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
       return embedUrl;
     };
 
-    try {
-      const response = await fetch(`${embedProxyUrl}?url=${encodeURIComponent(release.url)}`);
-      if (!response.ok) throw new Error(`Proxy fetch failed: ${response.status}`);
-      const data = await response.json();
-      return applyEmbedData(data);
-    } catch (err) {
-      console.warn("Failed to fetch embed info", err);
-      return null;
-    }
+    const fetchPromise = (async () => {
+      try {
+        const response = await fetch(`${embedProxyUrl}?url=${encodeURIComponent(release.url)}`);
+        if (!response.ok) throw new Error(`Proxy fetch failed: ${response.status}`);
+        const data = await response.json();
+        return applyEmbedData(data);
+      } catch (err) {
+        console.warn("Failed to fetch embed info", err);
+        return null;
+      } finally {
+        embedFetchesInFlight.delete(release.url);
+      }
+    })();
+    embedFetchesInFlight.set(release.url, fetchPromise);
+    return fetchPromise;
   }
 
   function renderFilters(sourceList = releases) {
@@ -602,7 +701,9 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
     updateSelectionStatusLog();
   }
 
+  let lastShownCount = null;
   function updateHeaderRange(count = null) {
+    if (count != null) lastShownCount = count;
     const fromVal = state.dateFilterFrom || "";
     const toVal = state.dateFilterTo || "";
     const start = fromVal || toVal;
@@ -617,7 +718,10 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
       }
     }
     if (headerCountLabel) {
-      const label = count == null ? "" : `${count} release${count === 1 ? "" : "s"} shown`;
+      // Argless callers (e.g. fetchScrapeStatus after load) must not blank
+      // the count — reuse the last real value.
+      const shown = lastShownCount;
+      const label = shown == null ? "" : `${shown} release${shown === 1 ? "" : "s"} shown`;
       headerCountLabel.textContent = label;
     }
     const rangeReleases = releases.filter((r) => withinSelectedRange(r) && r.url);
@@ -702,6 +806,7 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
       node.remove();
     });
     document.querySelectorAll("tr.data-row").forEach((row) => row.classList.remove("expanded"));
+    state.expandedKey = null;
   }
 
   function createDetailRow(release) {
@@ -734,8 +839,13 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
 
   function renderTable() {
     const tbody = document.getElementById("release-rows");
+    // Preserve the hide-viewed exemption across a re-render (applyHideViewed
+    // sets it from the live DOM just before rendering); user-initiated closes
+    // (Escape, collapse click) clear it via closeOpenDetailRows.
+    const exemptExpandedKey = state.expandedKey;
     tbody.innerHTML = "";
     closeOpenDetailRows();
+    state.expandedKey = exemptExpandedKey;
 
     const dateFiltered = releases.filter((r) => withinSelectedRange(r));
     renderFilters(dateFiltered);
@@ -767,6 +877,8 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
       tr.dataset.key = key;
       tr.dataset.page = release.page_name || "";
       tr.tabIndex = 0;
+      const safePageUrl = safeHttpUrl(pageUrlFor(release)) || "#";
+      const safeReleaseUrl = safeHttpUrl(release.url) || "#";
       tr.innerHTML = `
           <td style="width:24px;"><span class="row-dot"></span></td>
           <td style="width:34px; text-align:center;">
@@ -776,10 +888,10 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
               </svg>
             </button>
           </td>
-          <td><a class="link" href="${pageUrlFor(release)}" target="_blank" rel="noopener">${release.page_name || "Unknown"}</a></td>
-          <td><a class="link" href="${pageUrlFor(release)}" target="_blank" rel="noopener">${release.artist || "—"}</a></td>
-          <td data-title-cell><a class="link" href="${release.url || "#"}" target="_blank" rel="noopener" data-title-link>${release.title || "—"}</a>${state.showCachedBadges && release.embed_url ? ' <span class="cached-badge">cached</span>' : ""}</td>
-          <td>${formatDate(release.date)}</td>
+          <td><a class="link" href="${esc(safePageUrl)}" target="_blank" rel="noopener">${esc(release.page_name || "Unknown")}</a></td>
+          <td><a class="link" href="${esc(safePageUrl)}" target="_blank" rel="noopener">${esc(release.artist || "—")}</a></td>
+          <td data-title-cell><a class="link" href="${esc(safeReleaseUrl)}" target="_blank" rel="noopener" data-title-link>${esc(release.title || "—")}</a>${state.showCachedBadges && release.embed_url ? ' <span class="cached-badge">cached</span>' : ""}</td>
+          <td>${esc(formatDate(release.date))}</td>
         `;
       const existingRead = state.viewed.has(key);
       const initialDot = tr.querySelector(".row-dot");
@@ -838,24 +950,18 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
 
         const embedTarget = detail.querySelector("[data-embed-target]");
         const descTarget = detail.querySelector("[data-desc-target]");
-        const dot = tr.querySelector(".row-dot");
-        if (dot) dot.classList.add("read");
-        tr.classList.remove("unseen");
-        const cachedUrl = key;
-        if (cachedUrl) {
-          state.viewed.add(cachedUrl);
-        }
-        setViewed(release, true);
+        setRowReadState(tr, release, true);
         if (descTarget) {
           descTarget.textContent = release.description || "Loading description…";
         }
         ensureEmbed(release).then((embedUrl) => {
-          if (!embedUrl) {
-            embedTarget.innerHTML = `<div class="detail-meta">No embed available. Is the app still running? <br><a class="link" href="${release.url || "#"}" target="_blank" rel="noopener">Open on Bandcamp</a>.</div>`;
+          const safeEmbedUrl = safeHttpUrl(embedUrl);
+          if (!safeEmbedUrl) {
+            embedTarget.innerHTML = `<div class="detail-meta">No embed available. Is the app still running? <br><a class="link" href="${esc(safeHttpUrl(release.url) || "#")}" target="_blank" rel="noopener">Open on Bandcamp</a>.</div>`;
             return;
           }
           const height = release.is_track ? 320 : 480;
-          embedTarget.innerHTML = `<iframe title="Bandcamp player" style="border:0; width:100%; height:${height}px;" src="${embedUrl}" seamless></iframe>`;
+          embedTarget.innerHTML = `<iframe title="Bandcamp player" style="border:0; width:100%; height:${height}px;" src="${esc(safeEmbedUrl)}" seamless></iframe>`;
           markCachedBadge(tr, release);
           if (descTarget) {
             descTarget.textContent = release.description || "No description available.";
@@ -891,17 +997,7 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
         }
         if (evt.key.toLowerCase() === "u") {
           evt.preventDefault();
-          const markerCell = tr.querySelector("td:first-child");
-          if (markerCell) {
-            const dot = markerCell.querySelector(".row-dot");
-            if (dot) dot.classList.toggle("read", false);
-            else {
-              const newDot = document.createElement("span");
-              newDot.className = "row-dot";
-              markerCell.appendChild(newDot);
-            }
-            setViewed(release, false);
-          }
+          setRowReadState(tr, release, false);
         }
         if (evt.key.toLowerCase() === "s") {
           evt.preventDefault();
@@ -918,23 +1014,22 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
           const dot = markerCell.querySelector(".row-dot");
           if (dot) {
             const willBeRead = !dot.classList.contains("read");
-            dot.classList.toggle("read");
-            tr.classList.toggle("unseen", !willBeRead);
-            setViewed(release, willBeRead);
+            setRowReadState(tr, release, willBeRead);
           }
         });
       }
 
       // Hover/focus-based preload with debounce (0.2s)
-      let preloadTimer;
-      const schedulePreload = () => {
-        preloadTimer = setTimeout(() => ensureEmbed(release), 200);
-      };
+      let preloadTimer = null;
       const cancelPreload = () => {
         if (preloadTimer) {
           clearTimeout(preloadTimer);
           preloadTimer = null;
         }
+      };
+      const schedulePreload = () => {
+        cancelPreload();
+        preloadTimer = setTimeout(() => ensureEmbed(release), 200);
       };
       tr.addEventListener("mouseenter", schedulePreload);
       tr.addEventListener("mouseleave", cancelPreload);
@@ -2147,19 +2242,31 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
     try {
       setLoading("Loading releases…");
       await fetchReleases();
-      const [viewed, starred] = await Promise.all([loadViewedSet(), loadStarredSet()]);
-      state.viewed = viewed || new Set();
-      state.starred = starred || new Set();
-      setDefaultDateFilters();
-      renderTable();
-      renderCalendar("range");
-      refreshToggleButtons();
-      fetchScrapeStatus();
-      hideLoading();
     } catch (err) {
       console.warn(err);
       showError((err && err.message) || "Failed to load releases. Is the bcfeed proxy running?");
+      return;
     }
+    try {
+      const [viewed, starred] = await Promise.all([loadViewedSet(), loadStarredSet()]);
+      state.viewed = viewed || new Set();
+      state.starred = starred || new Set();
+    } catch (err) {
+      // Degrade gracefully: the table is still usable without seen/starred
+      // history — default to empty sets and say so instead of hiding the app.
+      console.warn("Failed to load seen/starred state", err);
+      state.viewed = new Set();
+      state.starred = new Set();
+      showNotice(
+        "Couldn't load your seen and starred history — everything is shown as new. Reload the page to try again.",
+      );
+    }
+    setDefaultDateFilters();
+    renderTable();
+    renderCalendar("range");
+    refreshToggleButtons();
+    fetchScrapeStatus();
+    hideLoading();
   }
   initData();
 })();

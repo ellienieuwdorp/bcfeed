@@ -499,7 +499,13 @@
       </div>
     </div>
     <div id="server-down-backdrop" class="server-down-backdrop">
-      <div class="server-down-modal">Please restart the app to use bcfeed.</div>
+      <div class="server-down-modal">
+        <p style="margin: 0 0 12px">
+          Can't reach bcfeed. Restart the app, then try again — this message will clear on its own
+          once the app is back.
+        </p>
+        <button id="server-down-retry" class="button" type="button">Try again</button>
+      </div>
     </div>
     <div id="max-results-backdrop" class="max-results-backdrop">
       <div class="max-results-modal">
