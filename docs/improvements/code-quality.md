@@ -11,6 +11,29 @@ in `docs/current-state/known-issues.md`.
 
 Sizes: **S** ≤ ~1 h, **M** = half-day, **L** = 1+ days.
 
+> **Re-baselined to `e363bf4` (2026-07-05).** The original audit cited `598a9dd`. The IMAP-provider
+> PR (#1) since merged (`+2724/-464`, 21 files) resolved several items and moved others. Changes
+> that affect this plan:
+> - **Markdown renderer replaced** by `markdown-it-py` (`MarkdownIt("gfm-like")`, server.py:70-84) —
+>   the hand-rolled multi-pass renderer is gone. **CQ-15 is RESOLVED**; CQ-31/CQ-43 re-scoped below.
+> - **Empty / non-HTML email crash fixed** — `construct_release_list` now guards `if not html_text`
+>   and wraps each parse in try/except with counted skips (pipeline.py:48-65). **CQ-12 is RESOLVED.**
+> - **Null-URL junk rows fixed at construction** — parse returns `None` and the row is skipped
+>   (pipeline.py:63). **CQ-13 is RESOLVED** (dedupe residue noted).
+> - **Parser extracted** to `bandcamp_email_parser.py`; `gmail.py` split into `gmail_client.py`
+>   (transport) + `gmail_provider.py` (adapter). All `gmail.py:NNN` refs below re-point accordingly.
+> - **Provider abstraction added** (`email_provider.py`, `imap_client.py`, `imap_provider.py`,
+>   `provider_factory.py`): Gmail-robustness items now apply *per provider*; IMAP is a second code
+>   path to hold to the same contract.
+> - **Credentials moved to the system keychain** (`credential_store.py`, `keyring`); `token.pickle`
+>   is now a read-only legacy-migration fallback (gmail_client.py:134). `/clear-credentials` now
+>   clears real keychain credentials — the CQ-08 naming-lie is largely resolved (re-scoped below).
+> - Frontend grew to 2113 lines (settings + IMAP onboarding redesign); cited JS defects persist but
+>   line numbers shifted — refs updated where verified.
+>
+> Items the merge did **not** touch keep their IDs and are still live. New-code findings from the
+> re-validation are added as §8 (CQ-70+).
+
 Product constraint (applies throughout): bcfeed is a calm, local, single-user utility. Fixes here
 must not add frameworks, build steps, or dependencies beyond dev-only tooling (pytest, ruff,
 prettier). Preserve the working strengths: dense sortable table, calendar coverage map,
@@ -24,32 +47,39 @@ Safe to land immediately, individually, with no test prerequisite. Each is a sma
 unambiguous correct answer.
 
 ### CQ-01 — Delete Python lint-level dead weight (S)
-Refs: py-quality low-severity cluster.
-- **What:** Remove: unused `import os` (gmail.py:2); dead decode block `s = email_text; try: s = s.decode()...` where `s` is never used again (gmail.py:211-215); unreachable str-shaped email fallback in `construct_release_list` (pipeline.py:28-30 — it would crash at line 34 anyway and `get_messages` only returns dicts); uncalled `mark_dates_not_scraped` (session_store.py:159-165); f-string with no placeholder (pipeline.py:78). Rename variables shadowing builtins (`format`, `id`, gmail.py:151, 159). Replace `type(exc) == HttpError` with `isinstance` (gmail.py:141, 145).
+Refs: py-quality low-severity cluster. **Re-pointed to `e363bf4`.**
+- **What:** Remove/fix, verified against the renamed files:
+  - `import os` in the Gmail transport — **RESOLVED** (no longer present in gmail_client.py).
+  - The `s = email_html; try: s = s.decode()...` decode block **moved to `bandcamp_email_parser.py:23-27` and is now LIVE** — it feeds the `if not s` empty-body guard (line 29). Drop this from the dead-code item; it is no longer dead.
+  - Unreachable str-shaped email fallback in `construct_release_list` — **still present**, now `pipeline.py:42-46` (`else:` branch on a non-`EmailMessage`, non-dict email). Providers now return `EmailMessage` objects, so it stays effectively unreachable; delete.
+  - Uncalled `mark_dates_not_scraped` — **still dead** (session_store.py:159). (Note: LOG-3 wants to *resurrect* this, not delete it — coordinate; leave if the logic-pipeline plan lands first.)
+  - f-string with no placeholder — re-verify in `pipeline.py` after the rewrite.
+  - Variables shadowing builtins `format`, `id` — **still present**, now `gmail_client.py:267, 275-276`.
+  - `type(exc) == HttpError` / `type(exc) == RefreshError` → `isinstance` — **still present**, now `gmail_client.py:257, 261`.
 - **Why:** Dead and misleading code costs more than it weighs: every future reader (including the audit itself) must disprove it before trusting the live paths. All of these were verified unreachable or inert; deletion carries zero behavior risk and shrinks the surface every later fix touches.
 - **Acceptance:** `grep` finds none of the listed symbols/blocks; `ruff check` (CQ-50) passes F401/F841/F541 with no per-line ignores; app populates and renders as before.
 
 ### CQ-02 — Fix untruthful error messages (S)
 Refs: PY-9 (message part), py-quality low cluster.
-- **What:** The Gmail 429 handler tells the user to "Try reducing batch size using argument --batch" — no such flag exists (gmail.py:169; bcfeed.py defines only `--port`/`--no-browser`). Replace with honest text ("Gmail rate limit hit — wait a minute and try again"). Also fix `launch_dashboard`'s docstring, which claims it starts the server when it only opens a browser tab (bcfeed.py:17-23).
+- **What:** The Gmail 429 handler tells the user to "Try reducing batch size using argument --batch" — no such flag exists. **Still present**, now `gmail_client.py:285` (bcfeed.py defines only `--port`/`--no-browser`). Replace with honest text ("Gmail rate limit hit — wait a minute and try again"). Also fix `launch_dashboard`'s docstring, which claims it starts the server when it only opens a browser tab (bcfeed.py:17-23). Coordinate with CQ-19/LOG-17, which replace this whole 429 branch with backoff.
 - **Why:** An error message is an instruction to a user at their most confused; instructing them to do something impossible converts a recoverable failure into a support incident. Truthful messages are free.
 - **Acceptance:** No user-facing string references a nonexistent flag or behavior; grep for `--batch` returns nothing.
 
 ### CQ-03 — /reset-caches: honor `clear_viewed` and `clear_starred` independently (S)
 Refs: PY-13.
-- **What:** `if clear_viewed or clear_starred:` unlinks BOTH `VIEWED_PATH` and `STARRED_PATH` (server.py:491-495). Split into two independent `if` blocks.
+- **What:** `if clear_viewed or clear_starred:` unlinks BOTH `VIEWED_PATH` and `STARRED_PATH` — **still present**, now `server.py:561-564`. Split into two independent `if` blocks.
 - **Why:** The API contract advertises three independent flags; the implementation silently widens the blast radius. Currently latent (frontend hardcodes all three true, dashboard.js:1044-1046) but the first granular UI — "clear seen history but keep my stars", a natural product ask per UX-4 — would destroy user-created data. Fixing latent contract violations while they are latent is when they are cheapest.
 - **Acceptance:** pytest (CQ-46): POST with only `clear_viewed` leaves `starred_state.json` intact, and vice versa; all-flags behavior unchanged.
 
 ### CQ-04 — Clamp and validate `max_results` in /populate-range-stream (S)
 Refs: py-quality low cluster item 8.
-- **What:** `GMAIL_MAX_RESULTS_HARD` (server.py:46) is not enforced: the route accepts any client-supplied `max_results` unclamped, and `int(...)` on a non-numeric value raises an unhandled ValueError → raw Flask 500 (server.py:559). Wrap in try, clamp with `min(value, GMAIL_MAX_RESULTS_HARD)`.
+- **What:** `GMAIL_MAX_RESULTS_HARD` (now `server.py:60`, value 2000) is still not enforced: the route accepts any client-supplied `max_results` unclamped, and `int(...)` on a non-numeric value raises an unhandled ValueError → raw Flask 500. **Still present**, now `server.py:631` (`int(request.args.get("max_results") or GMAIL_MAX_RESULTS_HARD)`). Wrap in try, clamp with `min(value, GMAIL_MAX_RESULTS_HARD)`. (LOG-16 owns the paired early-stop pagination; the pipeline now also re-checks `len(message_ids) > max_results` at pipeline.py:141.)
 - **Why:** A constant named `_HARD` that is not a hard limit is a trap for the next maintainer; unvalidated input on a network-reachable route (the server currently binds 0.0.0.0 — SEC-1) should never produce a stack-trace 500.
 - **Acceptance:** `max_results=999999` is clamped; `max_results=abc` returns a JSON 400, not HTML 500. Covered by a CQ-46 smoke test.
 
 ### CQ-05 — Load Credentials modal: X/backdrop must cancel, not open the file picker; fix typo (S)
 Refs: JS-9; ux-flow low cluster (typo).
-- **What:** `hideLoadCredsModal` unconditionally calls `openLoadCredsFile()` (dashboard.js:380-385), so X, Continue, and backdrop-click all open the OS file dialog. Only Continue should. Also fix "This must downloaded from Google Cloud." (dashboard.html:173).
+- **What:** `hideLoadCredsModal` still unconditionally calls `openLoadCredsFile()` — **still present**, now `dashboard.js:383-393` (all three of `loadCredsClose`, `loadCredsContinue`, backdrop-click route through `hideLoadCredsModal`, which opens the picker at line 387). Only Continue should. The typo is now **RESOLVED** — dashboard.html:294 reads "This must be downloaded from Google Cloud." Drop the typo half; keep the dismiss-should-not-act fix.
 - **Why:** Close controls that perform the action they exist to avoid violate the most basic UI contract (dismissal = no-op). Given the backend then runs a blocking OAuth flow on upload (SEC-6/UX-2), an accidental selection is heavyweight.
 - **Acceptance:** Clicking X or the backdrop hides the modal and nothing else happens; Continue opens the picker; typo gone.
 
@@ -65,11 +95,17 @@ Refs: js-quality low cluster item on modal dismissal.
 - **Why:** One interaction idiom per app; a modal that vanishes when you click its text reads as breakage.
 - **Acceptance:** Clicking the max-results modal body does not dismiss it; clicking the backdrop does.
 
-### CQ-08 — Rename `/clear-credentials` to match what it does (S)
-Refs: py-quality low cluster item 7.
-- **What:** The endpoint deletes `token.pickle`, not `credentials.json`, yet is named clear-credentials and logs "Credentials cleared." (server.py:500-514). Either rename to `/clear-token` (and update the one JS call site + button label wording with the UX plan) or make it delete both files; pick one and make name, log line, and behavior agree.
-- **Why:** Names are the API's documentation. This one is currently a lie in three places at once, and it sits next to a real credentials-file-writing endpoint — a confusion multiplier during incident debugging.
-- **Acceptance:** Endpoint name, log message, and file(s) deleted are consistent; JS call site updated; CQ-46 smoke test asserts which files remain.
+### CQ-08 — `/clear-credentials` name/behavior alignment (S) — ~~mostly RESOLVED upstream~~
+Refs: py-quality low cluster item 7. **Re-scoped at `e363bf4`.**
+- **Resolved:** The endpoint no longer deletes `token.pickle` by name. It now calls
+  `credential_store.clear_gmail_credentials()` (server.py:568-585), which clears the *actual* Gmail
+  client config **and** token from the keychain — so the name, the "Credentials cleared." log line,
+  and the behavior now agree. The original three-way lie is gone.
+- **Residual (S):** `credential_store.clear_gmail_credentials(clear_client_config=...)` has two modes;
+  `/load-credentials` calls it with `clear_client_config=False` (server.py:606). Confirm the UI's
+  "clear credentials" button maps to the full clear, and that the legacy `token.pickle` fallback
+  (gmail_client.py:134, `_load_legacy_token`) is also removed/ignored on clear so a stale pickle
+  can't silently re-authorize. Fold into the CQ-70 credential-store review below.
 
 ---
 
@@ -92,35 +128,69 @@ Refs: PY-2; same defect as ARCH-3 (this plan owns the worker fix; the typed-even
 - **Why:** A system must never report success it cannot prove. Silent failure is strictly worse than a crash: the user's mental model ("populate finished, nothing new this month") is corrupted, and combined with the pre-CQ-10 ordering it masked permanent data loss. Failure reporting is the cheapest reliability feature that exists.
 - **Acceptance:** pytest with a worker whose pipeline raises `RuntimeError`: the SSE stream ends with `event: error` carrying the message, never `event: done`. Manual: force a crash (e.g. corrupt a date in the cache pre-CQ-14) → UI shows a persistent error, no page reload, log intact.
 
-### CQ-12 — Guard emails without an HTML part; skip-and-log per-email parse failures (S)
-Refs: PY-3.
-- **What:** `scrape_info_from_email(None, ...)` crashes with `AttributeError: 'NoneType' object has no attribute 'find_all'` (guarded soup at gmail.py:222, unconditional dereference at 226/235) — empirically reproduced; one plain-text email aborts the whole populate. Early-return the None-tuple when `email_text` is falsy, and wrap the per-email parse in `construct_release_list` in try/except that logs ("Skipped 1 email that couldn't be read") and continues.
-- **Why:** A pipeline over third-party input must be resilient per-item: one malformed unit may cost that unit, never the batch. Bandcamp does not guarantee HTML-part emails, and forwarded/reply variants already match the Gmail query.
-- **Acceptance:** pytest fixture: a message dict with no HTML part yields a skip (no raise) and the remaining messages still produce releases. The 6-None early return is unit-tested directly.
+### CQ-12 — Guard emails without an HTML part; skip-and-log per-email parse failures (S) — ~~RESOLVED upstream~~
+Refs: PY-3. **Resolved by the merge (commit `d3420ae` "avoid populate crash on empty email body").**
+- **What was done:** `parse_release_email` (renamed from `scrape_info_from_email`, now in
+  `bandcamp_email_parser.py`) early-returns the None-tuple when the body is empty/`"none"` (lines
+  29-30). `construct_release_list` skips falsy `html_text` (`pipeline.py:48-50`) **and** wraps each
+  per-email parse in try/except that counts and logs skips (`pipeline.py:52-60, 83-84`).
+- **Residual (verify, not a blocker):** the skip message is generic (`"Skipped N message(s) due to
+  parse errors"`), not per-reason — LOG-18 wants skip counts *by reason* (no-html / no-date /
+  no-link / classifier-reject). Tracked there. A pytest fixture for the no-HTML-part case is still
+  worth adding under CQ-44 to lock the behavior.
 
-### CQ-13 — Drop null-URL junk rows at construction time (S)
-Refs: PY-5.
-- **What:** The junk guard `if not all(x is None for x in [date, ...])` (pipeline.py:38) is defeated because `date` is parsed separately and non-None; linkless emails become `{'url': None, 'title': None, ...}` rows that are cached, served, and can never be starred/viewed (URL is the primary key everywhere). Gate on `if release_url is not None:` instead.
-- **Why:** An entity without its primary key is not an entity. Persisting it pollutes every downstream consumer for the lifetime of the append-only cache.
-- **Acceptance:** pytest: a linkless email produces zero releases; a mixed batch produces only the URL-bearing ones. Follow-up noted for the maintainer: existing caches may already contain null-URL rows — `/releases` may filter them defensively (one-line) rather than migrating.
+### CQ-13 — Drop null-URL junk rows at construction time (S) — ~~RESOLVED upstream~~
+Refs: PY-5. **Resolved by the merge.**
+- **What was done:** `parse_release_email` returns the None-tuple when no `/album/`|`/track/` link is
+  found (bandcamp_email_parser.py:52-53), and `construct_release_list` now gates on
+  `if not release_url: skipped += 1; continue` (`pipeline.py:63-65`) — a linkless email produces zero
+  rows. `dedupe_by_url` also skips null URLs (util.py:59-64).
+- **Residual (S, low-risk cleanup):** the old all-None guard `if not all(x is None for x in [...])`
+  survives at `pipeline.py:67` but is now dead — `release_url` is guaranteed truthy above it, so the
+  condition is always true. Delete it (fold into CQ-33). The `without_url` passthrough in
+  `dedupe_by_date`/`dedupe_by_url` (util.py:74-79, 94) is now defensive-only; LOG-8 owns removing it
+  and the one-time cache sweep for pre-existing null-URL rows.
 
 ### CQ-14 — Tolerate malformed dates: `allow_none` + skip-with-log at both unguarded `parse_date` sites (S)
 Refs: PY-7.
-- **What:** (1) pipeline.py:32 `parse_date(email.get('date'))` raises on a missing/unparseable Date header; (2) `dedupe_by_date` (util.py:81 via pipeline.py:117) raises on any bad `date` field in the cache — permanently bricking populates for that range, silently (pre-CQ-11). Use `allow_none=True` semantics, log-and-skip unparseable items, and treat date-less items like the existing `without_url` bucket.
+- **What:** **Partially addressed — infrastructure landed, call sites not converted.** `parse_date`
+  *gained* an `allow_none: bool` parameter (util.py:6-30), but the two crashing call sites still call
+  it without it: (1) `pipeline.py:40` `parse_date(email.get("date")).strftime(...)` — now guarded by
+  `if email.get("date")` for the legacy-dict path, but a *present-but-garbage* Date still raises
+  (and this line sits *outside* the per-email try/except at 52-60, so it aborts the run); (2)
+  `dedupe_by_date` at `util.py:81` still calls `parse_date(item.get("date"))` with no `allow_none`,
+  so any bad `date` field in the cache still raises and bricks every populate touching that range
+  (invoked via `pipeline.py:115` and `pipeline.py:177`). Convert both to `allow_none=True`,
+  log-and-skip unparseable items, treat date-less items like the `without_url` bucket. Note the new
+  `EmailMessage.date` provider field is already a pre-formatted `YYYY-MM-DD` string (email_provider.py:19),
+  so only the legacy-dict and cache-read paths need hardening.
 - **Why:** Data read back from disk is input, not invariant: the cache is a hand-editable JSON file and older versions wrote different shapes. A single bad record must degrade to a single skipped record, and the failure mode ("every populate of June silently does nothing, forever") is among the worst in the app.
 - **Acceptance:** pytest: `dedupe_by_date` over a list containing `{'date': 'garbage'}` and `{'date': None}` returns the parseable items plus the skipped ones (or excludes them, per chosen semantics) without raising; a message with no Date header is skipped with a log line, not fatal.
 
-### CQ-15 — Fix markdown renderer link mangling (autolink-inside-href) (S)
-Refs: PY-6.
-- **What:** `_format_setup_inline` rewrites `[label](https://…)` to an anchor (server.py:71) and THEN runs the bare-URL autolink regex over the result (server.py:72-76), producing nested broken anchors — empirically reproduced. Tokenize markdown links out first (placeholder substitution), autolink the remainder, re-insert.
-- **Why:** Multi-pass string rewriting over its own output is order-fragile by construction; this is latent only because no shipped .md file currently uses an external markdown link, so the first normal doc edit breaks the rendered /setup page — exactly the page a stuck first-run user is reading.
-- **Acceptance:** Golden test (CQ-43): `_format_setup_inline('Go to [Google Cloud Console](https://console.cloud.google.com/) and sign in.')` yields exactly one well-formed anchor; full-file goldens of SETUP.md/README.md/GMAIL_SETUP.md render unchanged (byte-identical) apart from intended fixes.
+### CQ-15 — Fix markdown renderer link mangling (autolink-inside-href) (S) — ~~RESOLVED upstream~~
+Refs: PY-6. **Resolved by the merge (commit `d1501c4`, switch to `markdown-it-py`).**
+- **What was done:** The hand-rolled `_render_markdown_html` / `_format_setup_inline` /
+  `_rewrite_doc_link` chain is deleted. Docs now render through a single
+  `MarkdownIt("gfm-like", {"html": True})` instance (`server.py:70-84`, module-level
+  `DOC_MARKDOWN_RENDERER`), invoked by `_serve_markdown_doc` (server.py:436-443). A compliant CommonMark
+  parser does not re-autolink inside an already-formed anchor, so the nested-anchor class of bug is
+  structurally gone. Internal doc-link rewriting is now a small custom renderer rule
+  (`DOC_LINK_MAP`, server.py:73-78) that also adds `target=_blank rel=noopener`.
+- **Follow-on (see CQ-43):** the renderer is now library-defined, so full-file goldens are lower-risk
+  but still worth keeping for the internal-link map and the `html:true` posture (see CQ-70's XSS note).
 
 ### CQ-16 — Remove the speculative quopri double-decode (S)
 Refs: PY-11.
-- **What:** gmail.py:66-72 unconditionally applies `quopri.decodestring` to the already-CTE-decoded Gmail body under a bare `except: pass`; any legitimate `=XX` hex sequence in URLs or text is silently corrupted and the corruption propagates into cached data. Delete the pass, or apply it only when the part's headers actually declare `Content-Transfer-Encoding: quoted-printable`. Remove the bare except either way.
+- **What:** **Still present**, now `gmail_client.py:196-200` (`get_html_from_message`): unconditionally
+  applies `quopri.decodestring` to the already-base64/CTE-decoded Gmail body under a bare `except: pass`
+  (line 199); any legitimate `=XX` hex sequence in URLs or text is silently corrupted and propagates
+  into cached data. Delete the pass, or apply it only when the part's headers actually declare
+  `Content-Transfer-Encoding: quoted-printable`. Remove the bare except either way. **Scope note:** this
+  is now Gmail-only — the IMAP path decodes correctly via `part.get_payload(decode=True)` + declared
+  charset (`imap_provider.py:234-244`), so no quopri hack is needed there. Keep the two providers'
+  body-extraction behavior in sync (a shared test fixture per CQ-44 covering both).
 - **Why:** Decoding must be driven by declared encoding, never by guessing — a decoder that "usually works" on non-encoded input is a data corruptor with a delay. The bare except also hides the only case where the guess visibly fails.
-- **Acceptance:** pytest fixture: an email whose HTML contains `id=123` and `=E2` sequences round-trips byte-identically; a genuinely quoted-printable-declared part (if support is kept) still decodes. No bare `except:` remains in gmail.py (`ruff` E722).
+- **Acceptance:** pytest fixture: a Gmail message whose HTML contains `id=123` and `=E2` sequences round-trips byte-identically; a genuinely quoted-printable-declared part (if support is kept) still decodes. No bare `except:` remains in gmail_client.py (`ruff` E722).
 
 ### CQ-17 — Surface, don't swallow: corrupted JSON stores get sidestepped, not silently emptied (S)
 Refs: PY-12.
@@ -136,13 +206,29 @@ Refs: PY-8; same defect family as ARCH-1/PERF-6 (this plan owns the minimum-viab
 
 ### CQ-19 — Replace `batch._responses` private-attr access with the callback API; add 429 backoff (M)
 Refs: PY-9.
-- **What:** gmail.py:162-165 reads google-api-python-client's private `BatchHttpRequest._responses` and manually json.loads raw bodies, with response pairing riding on private dict insertion order. Use `batch.add(request, callback=...)`, which delivers parsed responses and per-request exceptions. On 429, sleep-and-retry the batch with exponential backoff (2-3 attempts) instead of aborting the run.
-- **Why:** Private attributes are not API: any minor library upgrade can break message download outright, and the failure would present as "populate broken" with no code change on our side. The supported callback interface is the same amount of code. Retry on rate-limit matters because (pre-CQ-10) an aborted run stranded earlier ranges.
+- **What:** **Still present**, now `gmail_client.py:278-281` (`get_messages`). The code *does* now use
+  `batch.add(...)` (line 276) but **without a callback**, then still reads the private
+  `BatchHttpRequest._responses` dict and `json.loads`es raw bodies (lines 278, 281), with pairing
+  riding on private insertion order. Switch to `batch.add(request, callback=...)`, which delivers
+  parsed responses and per-request exceptions. On 429 (currently the bogus `--batch` message at
+  gmail_client.py:285, see CQ-02), sleep-and-retry the batch with exponential backoff (2-3 attempts)
+  instead of aborting. **Provider scope:** this is the Gmail transport only; IMAP fetches one message
+  at a time via `imap_client.uid_fetch_body` (imap_client.py:150) and has no batch/`_responses`
+  concern — but LOG-17's backoff/honest-error contract applies to both clients.
+- **Why:** Private attributes are not API: any minor library upgrade can break message download outright, and the failure would present as "populate broken" with no code change on our side. The supported callback interface is the same amount of code. Retry on rate-limit matters because (pre-CQ-10/LOG-1) an aborted run stranded earlier ranges.
 - **Acceptance:** pytest with a mocked batch: responses arrive via callbacks in correct pairing; a single 429 triggers a retry then succeeds; `grep _responses` returns nothing. Manual: a real 200-email populate completes.
 
 ### CQ-20 — /embed-meta: cache-first read, guarded `literal_eval`, generic error body (M)
 Refs: PY-10; overlaps PERF-2 (cache-first is also its top fix) and SEC-2 (URL allowlisting is the architecture plan's ARC-5 security batch — coordinate, one PR ideally).
-- **What:** (1) The endpoint writes `embed_cache.json` but never reads it — check `_load_embed_cache().get(release_url)` first and return the hit; (2) `ast.literal_eval` fallback (bandcamp.py:17-20) is uncaught at server.py:429 → raw Flask HTML 500 breaking the endpoint's JSON contract — wrap in the same try, return None on failure; (3) the fetch-failure path returns the raw exception string (server.py:426) — map to a generic message, log details server-side.
+- **What:** (1) **Still present** — the endpoint writes `embed_cache.json` (via `_save_embed_metadata`,
+  server.py:508) but never reads it before fetching; every hover/star hits bandcamp.com live
+  (server.py:479-511). Check `_load_embed_cache().get(release_url)` first and return the hit.
+  (2) `ast.literal_eval` fallback (bandcamp.py:20) is still uncaught — `extract_bc_meta` is called at
+  `server.py:497`, *outside* the `try` that only wraps `requests.get` (486-491), so a non-literal meta
+  attr still raises → raw Flask HTML 500. Wrap it, return None on failure. (3) **Partially improved** —
+  the fetch-failure path now returns a JSON 502 (`server.py:491`) instead of leaking to Flask, but the
+  body still embeds the raw exception string (`f"Failed to fetch Bandcamp page: {exc}"`). Map to a
+  generic message, log details server-side.
 - **Why:** A cache that is written but never read is pure cost; every hover/star of an uncached release currently hits bandcamp.com live. Error contracts must be uniform (JSON in, JSON out) or the client's error handling is fiction. Raw exception strings leak internals and (per SEC-2) form a port-scan oracle.
 - **Acceptance:** pytest: second request for the same URL performs no network fetch (mock `requests.get`, assert one call); a page whose meta attribute is not a Python literal returns JSON `{error: ...}` with status 502, not HTML; error bodies contain no exception class names or paths.
 
@@ -206,15 +292,26 @@ Refs: py-quality low cluster (duplicate persistence); enabler for ARCH-8's extra
 - **Why:** The same-tmp-path bug was written twice because the pattern exists twice; every future persistence fix (fsync, locking, corruption handling) must otherwise be applied in two places or silently diverge.
 - **Acceptance:** `server.py` contains no direct JSON file IO; one implementation of atomic write in the codebase; CQ-42 round-trip tests run against the shared module; behavior byte-identical for well-formed stores.
 
-### CQ-31 — Extract the markdown renderer to its own module (S)
-Refs: ARCH-8 item 1; pairs with CQ-15/CQ-43.
-- **What:** Move `_render_markdown_html`/`_format_setup_inline`/`_rewrite_doc_link` (server.py:61-145) into `docs_render.py` with a pure `render(md_text) -> html` entry point.
-- **Why:** It renders three user-facing pages and demonstrably had a latent bug (PY-6); pure text-to-text functions are the cheapest code in the app to golden-test, but only once they are importable without the Flask module.
-- **Acceptance:** server.py imports the renderer; CQ-43 goldens import `docs_render` directly (no Flask app needed); rendered pages byte-identical pre/post move.
+### CQ-31 — Extract the markdown renderer to its own module (S) — re-scoped (low priority)
+Refs: ARCH-8 item 1; pairs with CQ-43. **Re-scoped at `e363bf4`.**
+- **What changed:** The hand-rolled functions this item named are gone (see CQ-15). The renderer is now
+  `DOC_MARKDOWN_RENDERER` plus the `DOC_LINK_MAP` custom link rule and `_serve_markdown_doc`
+  (server.py:70-84, 436-476). The original motivation — "importable without Flask to golden-test a
+  fragile hand-rolled renderer" — is largely gone: the parsing is a library concern now. Remaining
+  value is small: move the ~15 lines of renderer construction + `DOC_LINK_MAP` + `_serve_markdown_doc`
+  into `docs_render.py` so CQ-43's goldens (link map, `html:true` posture) import without the Flask
+  app. Demote to nice-to-have; do it only if/when CQ-43 or the ARCH-8 extraction lands.
+- **Acceptance:** if done, server.py imports the renderer; CQ-43 goldens import `docs_render` directly; rendered pages byte-identical pre/post move.
 
 ### CQ-32 — Remove the dead `img_url` field end-to-end (S)
 Refs: py-quality low cluster item 2.
-- **What:** Declared but never assigned in `scrape_info_from_email` (gmail.py:204), threaded through pipeline.py:34-42 and `construct_release` (util.py:37,44), serialized as `null` to the frontend forever. Delete the field at all sites; tolerate its presence in old cached data on read.
+- **What:** **Still present** at renamed sites: declared but only ever `None` in `parse_release_email`
+  (bandcamp_email_parser.py:16, returned at 106), threaded through `pipeline.py:53,67,71` and
+  `construct_release` (util.py:37,44), serialized as `null` forever. Delete the field at all sites;
+  tolerate its presence in old cached data on read. **Coordinate with LOG-19**, which chooses to
+  *repurpose* artwork into an `art_url` on the enrichment record instead of the parse row — do the
+  delete-at-parse-time half here, leave the add-`art_url`-at-enrichment half to LOG-19 so they don't
+  fight.
 - **Why:** A field that is always null is a standing question every reader must answer ("where does this get set?" — nowhere). Removing it also shrinks the payload PERF-5 worries about, marginally.
 - **Acceptance:** `grep img_url` returns nothing in source; `/releases` output for an existing (old) cache still parses; pipeline tests pass.
 
@@ -270,12 +367,26 @@ fixture test. Priority below is ordered by (protection value ÷ setup cost).
 - **Targets & why:** save→load round-trips for release cache, date sets, viewed/starred; corruption sidestep (CQ-17); `cached_releases_for_range` day semantics; the per-range persist-then-mark ordering (CQ-10) via a fake-pipeline test. Persistence is where the audit's permanent-data-loss family lives; round-trips are the regression net under every storage change up to and including a future SQLite migration (ARCH-7).
 - **Acceptance:** ~8-10 cases green using `BCFEED_DATA_DIR=tmp_path`; monkeypatched `date.today()` where the six inline call sites require it (or a `today()` injection refactor if cheaper).
 
-### CQ-43 — Tier 1: markdown renderer goldens (S)
-- **Targets & why:** golden HTML render of SETUP.md, README.md, GMAIL_SETUP.md plus unit cases: markdown link (locks CQ-15), bare-URL autolink, `javascript:` href rejection (the architecture plan's ARC-5 security batch owns the scheme filter), heading/list/inline-code paths. A hand-rolled renderer with no spec is defined BY its goldens; without them every edit is a gamble on three user-facing pages.
-- **Acceptance:** goldens checked into `tests/goldens/`; deliberate renderer change requires a reviewed golden update.
+### CQ-43 — Tier 1: markdown renderer goldens (S) — re-scoped
+- **Targets & why:** now that rendering is `markdown-it-py` (CQ-15), the goldens no longer guard a
+  hand-rolled parser — they guard *our* config: the `DOC_LINK_MAP` internal-link rewrite + `target`/`rel`
+  injection (server.py:73-78), and the `MarkdownIt(..., {"html": True})` posture (raw HTML passthrough —
+  see CQ-70's note on whether that is safe for these docs). Golden HTML render of SETUP.md, README.md,
+  GMAIL_SETUP.md, **and now IMAP_SETUP.md** (added by the merge). Drop the "bare-URL autolink / nested
+  anchor" unit cases (the library handles those); keep an internal-link-rewrite case and a `javascript:`
+  href-rejection case (ARC-5 owns the scheme filter). Renderer now imports cheaply — CQ-31 extraction is
+  no longer a prerequisite.
+- **Acceptance:** goldens checked into `tests/goldens/` for all four docs; deliberate renderer/config change requires a reviewed golden update.
 
 ### CQ-44 — Tier 2: Gmail email-parsing fixtures (M)
-- **Targets & why:** `scrape_info_from_email` + `construct_release_list` against 3-4 saved, redacted real Bandcamp notification emails: with/without HTML part (locks CQ-12), track vs album, "by artist" copy variants, linkless email (locks CQ-13), quoted-printable-looking content (locks CQ-16). This is the app's most fragile, most load-bearing heuristic code; fixtures are the only way upstream Bandcamp copy changes become detectable before users see empty fields.
+- **Targets & why:** `bandcamp_email_parser.parse_release_email` (renamed from `scrape_info_from_email`,
+  now standalone and Flask-free) + `construct_release_list` against 3-4 saved, redacted real Bandcamp
+  notification emails: with/without HTML part (regression-locks the now-fixed CQ-12), track vs album,
+  "by artist" copy variants, linkless email (regression-locks CQ-13), quoted-printable-looking content
+  (locks CQ-16). **Add an IMAP-provider case:** run the same fixtures through `imap_provider._extract_html`
+  (imap_provider.py:212-246) so both providers' body extraction is covered by one fixture set. This is
+  the app's most fragile, most load-bearing heuristic code; fixtures are the only way upstream Bandcamp
+  copy changes become detectable before users see empty fields.
 - **Acceptance:** fixtures in `tests/fixtures/emails/` with personal data scrubbed; parse output asserted field-by-field.
 
 ### CQ-45 — Tier 2: Bandcamp page-extraction fixture (S)
@@ -299,7 +410,7 @@ Dev-only tooling; nothing ships to users. Land each format pass as an isolated c
 it in `.git-blame-ignore-revs`.
 
 ### CQ-50 — Python: ruff (lint + format) (S)
-- **Why ruff:** one tool replaces flake8+isort+pyupgrade+black at near-zero config, no plugins to manage — right-sized for a 1,600-line backend. Several audit findings are literally ruff rules: bare except (E722, gmail.py:71), unused import (F401), f-string without placeholder (F541), builtin shadowing (A001-ish via flake8-builtins if enabled).
+- **Why ruff:** one tool replaces flake8+isort+pyupgrade+black at near-zero config, no plugins to manage — right-sized for a 1,600-line backend. Several audit findings are literally ruff rules: bare except (E722, gmail_client.py:199), unused import (F401), f-string without placeholder (F541), builtin shadowing (A001-ish via flake8-builtins if enabled).
 - **Config sketch** (`pyproject.toml`):
   ```toml
   [tool.ruff]
@@ -325,7 +436,7 @@ it in `.git-blame-ignore-revs`.
 - **Acceptance:** `ruff check .` and `ruff format --check .` clean; both enforced in CI (CQ-47).
 
 ### CQ-51 — JS/CSS/HTML: prettier; optional ESLint follow-up (S, +M optional)
-- **Why prettier:** the frontend is a 1,725-line hand-formatted file; a formatter makes every subsequent diff (the §2/§3 surgery above) reviewable. No build step is introduced — run via `npx`, or pin in a tiny dev-only `package.json`.
+- **Why prettier:** the frontend is a 2,113-line hand-formatted file; a formatter makes every subsequent diff (the §2/§3 surgery above) reviewable. No build step is introduced — run via `npx`, or pin in a tiny dev-only `package.json`.
 - **Config sketch** (`.prettierrc`):
   ```json
   {
@@ -344,12 +455,25 @@ it in `.git-blame-ignore-revs`.
 
 ### CQ-60 — Fix requirements.txt (S)
 Refs: ARCH-9c (confirmed).
-- **What:** Current file lists `requests` twice (lines 3 and 7), depends on the `bs4` shim instead of `beautifulsoup4`, and pins nothing while the Homebrew formula pins everything (and vendors both beautifulsoup4 AND the shim because of this). Dedupe; replace `bs4` → `beautifulsoup4`; pin with `>=,<` ranges or exact pins; add `requirements-dev.txt` (pytest, ruff). Consider `pyproject.toml` as the single dependency source later — not required now.
+- **What:** **Re-verified at `e363bf4`.** The duplicate `requests` is **gone**. The merge added
+  `keyring`, `markdown-it-py`, and `linkify-it-py` (the current file is: google-api-python-client,
+  google-auth-oauthlib, requests, `bs4`, flask, furl, keyring, markdown-it-py, linkify-it-py). Remaining
+  work: the `bs4` shim is **still present** (replace `bs4` → `beautifulsoup4`); nothing is pinned while
+  the Homebrew formula pins everything; the new IMAP path uses only stdlib `imaplib`/`email` (no new
+  runtime dep to add there). Pin with `>=,<` ranges or exact pins; add `requirements-dev.txt`
+  (pytest, ruff); verify `keyring` and both markdown-it packages are reflected in the formula.
+  Consider `pyproject.toml` as the single dependency source later — not required now.
 - **Why:** The dev environment and the distributed environment currently drift arbitrarily; the shim dependency is a well-known packaging smell that also bloats the formula.
 - **Acceptance:** `pip install -r requirements.txt` in a clean venv runs the app; no duplicate lines; formula regenerated from the fixed list at next release; `bs4` shim gone from both.
 
 ### CQ-61 — De-duplicate README.md / SETUP.md; assign each doc one job (S/M)
-- **What:** Both files open with competing product descriptions (README: "a Python app that generates a dashboard…"; SETUP: "A macOS desktop app…") and overlapping install/run/keep-terminal-open guidance. Assign: **README** = what it is, screenshot, the workflow section (which is good), pointers to SETUP/GMAIL_SETUP/privacy; **SETUP** = install + run + troubleshooting only; **GMAIL_SETUP** = Google credentials only (already true). One canonical product description, written once, in README; SETUP links to it.
+- **What:** **Re-verified at `e363bf4`** — the merge already gutted `SETUP.md` (`-132` lines) and edited
+  README/GMAIL_SETUP, so some overlap may be reduced; re-diff before acting. There is now also a new
+  `IMAP_SETUP.md` (`+114`) to slot into the doc map. Assign: **README** = what it is, screenshot, the
+  workflow section (which is good), pointers to SETUP/GMAIL_SETUP/**IMAP_SETUP**/privacy; **SETUP** =
+  install + run + troubleshooting only; **GMAIL_SETUP** = Google credentials only; **IMAP_SETUP** = IMAP
+  host/app-password/folder setup only. One canonical product description, written once, in README; the
+  setup docs link to it. Verify the two product descriptions still disagree post-merge before rewriting.
 - **Why:** Two half-overlapping truths guarantee one goes stale — they already disagree on what kind of app this is and on the Python version story. In-app docs rendering (the `/setup`, `/readme` routes) makes doc quality a product surface, not repo garnish.
 - **Acceptance:** No paragraph appears in two files; each file's first heading states its single job; the in-app docs pages still render correctly (CQ-43 goldens updated deliberately).
 
@@ -370,22 +494,85 @@ Refs: ARCH-9a/b (corrected form) — the release/tagging mechanics belong to the
 - **Acceptance:** grep for `3.10` returns only `.python-version` (or nothing); UI version string comes from the constant; docs state one supported Python.
 
 ### CQ-65 — privacy.md accuracy follow-through (pointer) (S)
-- **What:** privacy.md promises read-only Gmail access while the code requests full `mail.google.com` scope (SEC-3 — the scope fix itself is the architecture plan's ARC-5 security batch's one-word change). Docs task here: after the scope fix lands, verify privacy.md, SETUP.md:106, and GMAIL_SETUP.md:53 all state `gmail.readonly` and add the "you must re-authorize once" migration note.
-- **Acceptance:** All three docs agree with the code's actual scope string; migration note present.
+- **What:** privacy.md promises read-only Gmail access while the code **still** requests full
+  `mail.google.com` scope — **SEC-3 CONFIRMED STILL PRESENT at `e363bf4`**, `gmail_client.py:217`
+  (`SCOPES = ['https://mail.google.com/']`, comment "Request all access"). The scope fix itself is the
+  architecture plan's ARC-5 security batch's one-word change. Docs task here: after the scope fix lands,
+  verify privacy.md, SETUP.md, and GMAIL_SETUP.md (line refs shifted — SETUP.md was gutted `-132` lines
+  by the merge; re-grep for the scope string) all state `gmail.readonly` and add the "you must
+  re-authorize once" migration note. **New surface:** the merge added an IMAP provider and
+  `IMAP_SETUP.md`; privacy.md must now also state that IMAP credentials are stored in the system keychain
+  (`credential_store.py`) and that IMAP access is whatever the user's app-password grants (bcfeed only
+  reads). Keep the privacy claims true for *both* providers.
+- **Acceptance:** All docs agree with the code's actual Gmail scope string; IMAP credential-storage +
+  access claims are stated and accurate; migration note present.
 
 ---
 
+## 8. New-code findings (from the `e363bf4` IMAP/provider merge)
+
+Added by the re-validation. These sit in the code introduced by PR #1 (provider abstraction, keychain
+credentials, IMAP path). IDs continue the CQ series from 70 to keep the originals stable.
+
+### CQ-70 — Credential-store & legacy-token review (S/M)
+Refs: new code (`credential_store.py`, gmail_client.py token paths); interacts with CQ-08.
+- **What:** (1) `gmail_authenticate` reads a keychain token *or* falls back to `pickle.load` of a
+  legacy `token.pickle` (`gmail_client.py:134`, `_load_legacy_token`). `pickle.load` of an on-disk file
+  is an arbitrary-deserialization sink; the file is local, but once a keychain token exists the pickle
+  path should be dropped, not kept as a silent fallback (a stale/rogue `token.pickle` could re-authorize
+  after `/clear-credentials`). Migrate-then-delete: on first successful keychain load, unlink the pickle.
+  (2) `keyring` errors are wrapped into `CredentialStoreError`/`CredentialStoreUnavailableError`
+  (credential_store.py:20-42) but several server routes catch bare `Exception` and return the raw string
+  (e.g. `/clear-credentials` server.py:583, `/load-credentials` server.py:617) — leaks internals; map to
+  generic messages (same rule as CQ-20). (3) `requirements.txt` must list `keyring` (verify — see CQ-60).
+- **Why:** Credentials are the one place in this app where "local-only" stops excusing sloppy handling;
+  a pickle fallback and raw error strings around secret storage are exactly what a security pass flags.
+- **Acceptance:** no `pickle.load` path survives once a keychain token is present; secret-store errors
+  surface as generic messages with details logged; `keyring` pinned in requirements.
+
+### CQ-71 — Provider-parity for parse/robustness fixes (tracking, S)
+Refs: new code (`imap_client.py`, `imap_provider.py`, `provider_factory.py`).
+- **What:** The Gmail-specific CQ items now have an IMAP twin that must not regress. Concretely, when
+  landing: CQ-16 (quopri) — IMAP already decodes correctly (imap_provider.py:234-244), keep it that way;
+  CQ-19/LOG-17 (batch API + backoff) — IMAP fetches per-message (imap_client.py:150) and needs its own
+  timeout/error handling; CQ-14/LOG-10 (date hardening) — `EmailMessage.date` is a pre-formatted string
+  (email_provider.py:19) so IMAP's `_extract`/date derivation must be checked for the same
+  garbage-tolerance. `provider_factory.create_provider` / `get_current_provider_type` (pipeline.py:5,
+  104-106) is the seam; any per-email robustness fix belongs behind the `EmailProvider` interface so both
+  providers inherit it.
+- **Why:** The abstraction doubles the surface for every parse/transport bug; without an explicit parity
+  note each fix risks being applied to one provider only.
+- **Acceptance:** each CQ/LOG parse-robustness item's tests run against both provider paths (or explicitly
+  document IMAP-N/A); no fix lands Gmail-only where the defect class exists in `imap_provider` too.
+
+### CQ-72 — `/load-credentials` runs a blocking OAuth flow in the request thread (S)
+Refs: new code (server.py:587-623); overlaps SEC-6/UX-2.
+- **What:** On upload, `/load-credentials` calls `gmail_authenticate()` synchronously (server.py:611),
+  which for a first-time token runs `flow.run_local_server(port=0)` (gmail_client.py:235) — a blocking
+  local OAuth server — inside the Flask request handler. The request hangs until the user completes the
+  browser consent, and any failure returns as a 500. This is the SEC-6/UX-2 concern in its new home; note
+  it so the UX plan's onboarding rework and the architecture plan's request-lifecycle work know the call
+  site.
+- **Why:** A network route that blocks on human interaction ties up a worker thread and gives no progress;
+  it also means the OAuth failure modes surface as opaque HTTP 500s.
+- **Acceptance:** documented as owned by SEC-6/UX-2; the fix (background the auth, stream progress, or move
+  it off the request path) lands there — this item is the pointer.
+
 ## 7. Suggested sequencing
+
+**Re-baseline note:** CQ-12, CQ-13, CQ-15 are RESOLVED upstream — struck from the waves below; their
+*regression tests* (CQ-42/CQ-43/CQ-44) still belong in the plan to lock the fixes. New-code items
+CQ-70…CQ-72 join the security/robustness waves.
 
 | Wave | Items | Rationale |
 |---|---|---|
 | 0 — Foundation | CQ-40, CQ-41, CQ-50, CQ-51 (format commits first), CQ-47 | Test seam + pure-function tests + tooling make every later diff safe and reviewable. |
-| 1 — Quick wins | CQ-01…CQ-08 | Independent, mergeable in any order; several are prerequisites-in-spirit for wave 2 reviews. |
-| 2 — Correctness core | CQ-10, CQ-11, CQ-12, CQ-13, CQ-14 (+CQ-42, CQ-44) | The compounding data-loss/silent-failure trio and its input guards, landed test-first. Highest leverage in the codebase. |
-| 3 — Robustness | CQ-15…CQ-19 (+CQ-43, CQ-45, CQ-46), CQ-21, CQ-22 | Renderer, decoding, locking, Gmail API, embed endpoint, escaping, health check. |
+| 1 — Quick wins | CQ-01, CQ-02, CQ-03, CQ-04, CQ-05, CQ-06, CQ-07 (CQ-08 mostly resolved — residual only) | Independent, mergeable in any order; several are prerequisites-in-spirit for wave 2 reviews. |
+| 2 — Correctness core | CQ-10, CQ-11, CQ-14 (+CQ-42, CQ-44 to regression-lock the resolved CQ-12/CQ-13) | **CQ-10 (persist-before-mark) is still unfixed and is the highest-leverage change in the codebase.** CQ-12/CQ-13 already landed; keep their fixtures. |
+| 3 — Robustness | CQ-16, CQ-17, CQ-18, CQ-19 (+CQ-43, CQ-45, CQ-46), CQ-20, CQ-21, CQ-22, **CQ-70** | Decoding, locking, Gmail batch API, embed endpoint, escaping, health check; CQ-15 done. CQ-70 (credential-store/legacy-pickle) rides with the security batch. |
 | 4 — Frontend state | CQ-23, CQ-24, CQ-25, CQ-26, CQ-27 (+JS-4/JS-5 from CQ-28) | Single-owner populate flow and embed caching; coordinate with UX plan's progress-UI work. |
-| 5 — Structure | CQ-30…CQ-37 | Dedup, dead-code sweep, inline-style extraction — enablers for the UI retheme and the ARCH-5 module split. |
-| Parallel | CQ-60…CQ-65 | Docs hygiene has no code dependencies; CQ-62 (LICENSE) should not wait. |
+| 5 — Structure | CQ-30…CQ-37 (CQ-31 demoted to nice-to-have) | Dedup, dead-code sweep, inline-style extraction — enablers for the UI retheme and the ARCH-5 module split. |
+| Parallel | CQ-60…CQ-65, **CQ-71, CQ-72** | Docs hygiene has no code dependencies; CQ-62 (LICENSE) should not wait. CQ-71 (provider parity) is a tracking discipline across waves 2-3; CQ-72 (blocking OAuth) points to SEC-6/UX-2. |
 
 Explicitly out of scope here (owned elsewhere, do not duplicate): SEC-1/2/3 network+scope fixes
 (the architecture plan's ARC-5 security batch), PERF-1/3/4/5 batching/virtualization (the

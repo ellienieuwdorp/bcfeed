@@ -1,6 +1,18 @@
 # bcfeed — Master implementation plan
 
-Date: 2026-07-05 · Baseline commit: 598a9dd · Status: approved plan, **no code changes yet**.
+Date: 2026-07-05 · Baseline commit: **e363bf4** · Status: approved plan, **no plan-scoped code changes yet**.
+
+> **Re-baselined 2026-07-05.** The audit ran at `598a9dd`; the repo then merged the IMAP-provider PR
+> and fast-forwarded to `e363bf4` (+2724/−464 across 21 files: email-provider abstraction —
+> `email_provider.py`, `provider_factory.py`, `gmail_provider.py`, `imap_provider.py`,
+> `imap_client.py`; `gmail.py` split into `gmail_client.py`; `bandcamp_email_parser.py` extracted;
+> keychain credential storage via `credential_store.py`; redesigned settings UI; markdown-it-py doc
+> renderer; empty-email-body crash fix). Every finding was revalidated against `e363bf4` and all six
+> input docs re-baselined; this plan is reworked to match. Findings the merge resolved (PY-3, PY-5
+> producer, PY-6, SEC-5, SEC-8, CQ-08/12/13/15, ARC-5e) are dropped from WP scopes and kept only as
+> regression tests; partially-landed items are re-scoped in place; new-code findings (PY-16..18,
+> SEC-10..11, UI-19, CQ-70..72, LOG-22..24, UIR-30) are folded into existing WPs. WP numbering is
+> unchanged from the original plan.
 
 This is the execution graph for an orchestration agent driving subagents. It composes the five
 approved specs into ordered, verifiable work packages (WPs). **The dependency graph is normative:
@@ -18,11 +30,19 @@ Input specs (every implementing agent reads the ones its WP cites):
 | UXP | `docs/improvements/ux-workflow.md` |
 | UIR | `docs/improvements/ui-redesign.md` (winning direction: **"Calm Slate"** with Liner Notes/Stockbook grafts) |
 
+All six docs were re-baselined to `e363bf4` on 2026-07-05: file:line evidence is current, resolved
+findings live in known-issues.md's **"Fixed upstream"** section, and the new-code finding series
+(PY-16..18, SEC-10..11, UI-19, CQ-70..72, LOG-22..24, UIR-30) is integrated below — no separate
+addendum exists.
+
 ## Global rules (apply to every WP)
 
 1. **Do not break the verified strengths:** the fast no-framework table, star-triggers-preload,
    calendar-as-coverage-map, honest SSE progress *content*, hover-prefetch, in-app docs, keyboard
-   triage shortcuts, local-first storage. Every WP's verification must confirm these still work.
+   triage shortcuts, local-first storage — and, new at e363bf4, the **redesigned Settings panel's
+   structure** (labeled sections, form primitives, inline status text next to its trigger): it is
+   the app's reference surface; normalize its colors (WP-19/20), keep its bones. Every WP's
+   verification must confirm these still work.
 2. **No new machinery:** no web framework, no frontend build step, no TypeScript, no async rewrite,
    no telemetry (architecture plan "Explicit non-goals" is binding).
 3. **Same-file = sequential.** Two WPs that touch the same source file never run concurrently.
@@ -87,8 +107,9 @@ PHASE 4 — polish + packaging
 | WP-12 → WP-17 | preload workers must go through the polite fetcher |
 | WP-13 → WP-23 | async OAuth + status endpoint before the onboarding "waiting" UI (UXP-4 dep) |
 | WP-13, WP-17 → WP-18 | last Phase-1 edits to `dashboard.js` must merge before it is split/deleted |
-| WP-14 → WP-15, WP-17, WP-27, WP-31 | schema v2 (ledger, canonical URLs, embed record) underlies all of these |
+| WP-14 → WP-15, WP-17, WP-27, WP-31 | schema v2 (provider-tagged ledger, canonical URLs, embed record) underlies all of these |
 | WP-15 → WP-24 | re-check backend (`refresh=1`) before the "Check again" UI (UXP-11) |
+| WP-16 → WP-15 | LOG-23's IMAP empty-marking gate must exist before refresh semantics trust empty-day records (lane order already guarantees it — listed for completeness) |
 | WP-16 → WP-24 (soft) | early pagination stop makes UXP-21's cap detection fast; UI works without it |
 | WP-17 → WP-24, WP-25 | preload job SSE + batch viewed endpoint consumed by enrichment UI and bulk mark-seen |
 | WP-06 → WP-23 | `/reset-caches` flag split (CQ-03) before the delete-data dialog trusts the flags |
@@ -119,7 +140,8 @@ PHASE 4 — polish + packaging
 - **Scope:** CQ-40, ARC-7a, ARC-5a / SEC-1; single `today()` helper (LOG-12 prerequisite).
 - **Files:** `paths.py` (env override, lazy mkdir), `util.py` (`today()`), call-site swaps in
   `session_store.py`, `pipeline.py`, `server.py` (also: `make_server("127.0.0.1", …)` at
-  server.py:247 and `find_free_port` host at 256/259), `bcfeed.py` (docstring fix from CQ-02 may
+  server.py:186, `find_free_port` host at 192-199, **and the `__main__` `app.run(host="0.0.0.0")`
+  at server.py:822** — all three binds), `bcfeed.py` (docstring fix from CQ-02 may
   land here or WP-06).
 - **Depends:** WP-01. **Parallel:** NO — exclusive (touches the backend hub files briefly).
 - **Size:** S.
@@ -132,7 +154,9 @@ PHASE 4 — polish + packaging
 ### WP-03a · Test harness core
 - **Goal:** conftest, fixture assets, CI skeleton — the substrate WP-04/05 tests plug into.
 - **Scope:** CQ-44 fixture *assets* (redacted real emails: HTML release email, plain-text-only,
-  linkless, track vs album, "by artist" variant), CQ-45 fixture page (+ one without
+  linkless, track vs album, "by artist" variant — **each fixture exercised through both provider
+  extraction paths**: `gmail_client.get_html_from_message` and `imap_provider._extract_html`, per
+  CQ-44/CQ-71), CQ-45 fixture page (+ one without
   `bc-page-properties`), CQ-47 / ARC-7d CI workflow, shared conftest (tmp data dir, frozen `today()`).
 - **Files:** `tests/conftest.py`, `tests/fixtures/emails/*`, `tests/fixtures/pages/*`,
   `.github/workflows/ci.yml`, `requirements-dev.txt`.
@@ -145,48 +169,65 @@ PHASE 4 — polish + packaging
 ### WP-03b · Test breadth + Playwright smoke
 - **Goal:** the regression net for everything after Phase 0.
 - **Scope:** CQ-41 (pure-function tier), CQ-42 (store round-trips — current behavior), CQ-43
-  (markdown goldens), CQ-46 (Flask test-client smokes of *current* contracts), ARC-7b remainder,
+  (markdown goldens — **re-scoped at e363bf4**: the renderer is markdown-it-py now, so goldens guard
+  *our* config — the `DOC_LINK_MAP` internal-link rewrite + `target`/`rel` injection and the
+  `html:true` posture — plus a `javascript:` href-rejection case that regression-locks the
+  upstream-fixed SEC-8; drop the nested-anchor/autolink unit cases, the library owns those),
+  CQ-46 (Flask test-client smokes of *current* contracts), ARC-7b remainder,
   ARC-7c Playwright smoke (launch with seeded `BCFEED_DATA_DIR` → rows render → expand → star →
   reload persists → calendar day filters → keyboard s/u work).
 - **Files:** `tests/test_util.py`, `tests/test_store.py`, `tests/test_docs_render.py` (goldens in
   `tests/goldens/`), `tests/test_routes.py`, `tests/e2e/smoke.spec.ts` (or `.py`), CI job 2.
-- **Depends:** WP-03a; **soft-dep WP-09** (generate SETUP/README goldens *after* WP-09's doc edits
+- **Depends:** WP-03a; **soft-dep WP-09** (generate doc goldens *after* WP-09's doc edits
   merge, or regenerate — orchestrator schedules WP-09 merge first).
 - **Parallel:** YES with the WP-04→06 backend lane and WP-07 (disjoint files; per rule 4, later WPs
   add their own test files rather than editing these).
 - **Size:** M.
-- **Acceptance:** ~25 cases green; goldens for SETUP.md/README.md/GMAIL_SETUP.md checked in;
+- **Acceptance:** ~25 cases green; goldens for SETUP.md/README.md/GMAIL_SETUP.md/**IMAP_SETUP.md**
+  (new at e363bf4) checked in;
   Playwright smoke green headless in CI; smoke asserts the do-not-break list items it can reach
   (star-triggers-preload request observed, keyboard shortcuts, persistence across reload).
 - **Verify:** pytest + Playwright in CI.
 
-### WP-04 · Pipeline correctness batch (data-loss / silent-failure trio)
-- **Goal:** stop active data loss; failures become visible; one bad email costs one email.
-- **Scope:** CQ-10 / LOG-1 / PY-1 / ARCH-2 (persist-per-range before mark-scraped) · CQ-11 / PY-2 /
-  ARCH-3 *worker half* (catch-all `except Exception` → enqueue `ERROR: {exc}` line — the client
-  already routes `ERROR:` lines; the typed terminal event supersedes this in WP-10) · CQ-12 /
-  LOG-18 / PY-3 (no-HTML-part guard, per-email try/except-skip-count) · CQ-13 / LOG-8 / PY-5
-  (null-URL gate) · CQ-14 / LOG-10-crash-half / PY-7 (`parse_date(..., allow_none=True)` at both
-  sites; date-less items never win keep-last) · CQ-16 / PY-11 (delete speculative quopri pass +
-  dead decode block).
-- **Files:** `pipeline.py`, `gmail.py`, `util.py`, `server.py` (worker function only),
-  `tests/test_pipeline_correctness.py`.
+### WP-04 · Pipeline correctness batch (data-loss / silent-failure residuals)
+- **Goal:** stop active data loss; one bad email costs one email — on both providers.
+- **Re-scope at e363bf4:** the merge already landed CQ-12/PY-3 (no-HTML guard + per-email
+  try/except-skip-count — bandcamp_email_parser.py:29-30, pipeline.py:48-60), CQ-13/PY-5's producer
+  half (null-URL emails skipped, pipeline.py:63-65), and the **worker catch-all half of
+  CQ-11/PY-2** (final `except Exception` → `ERROR:` line, server.py:679-688). Those leave this WP;
+  the remaining CQ-11 half — a distinct terminal `event: error` — is WP-10's. This WP keeps the
+  still-unfixed correctness items, adds the new IMAP date crasher, and regression-locks the
+  upstream fixes.
+- **Scope:** CQ-10 / LOG-1 / PY-1 / ARCH-2 (persist-per-range before mark-scraped — **still unfixed
+  and still the single highest-severity item in the codebase**: mark at pipeline.py:163 vs persist
+  at 183) · CQ-14 / LOG-10-crash-half / PY-7 (`parse_date(..., allow_none=True)` at both crash
+  sites — pipeline.py:40 and util.py:81; the parameter exists since the merge but neither site uses
+  it; date-less items never win keep-last) · LOG-24 / PY-18 (IMAP `date=""` on unparseable headers →
+  skip-with-count at construction; `dedupe_by_date` tolerates None — closes the PY-7 crash class
+  reachable through the *normal* IMAP path) · CQ-16 / PY-11 (delete the speculative quopri pass,
+  now gmail_client.py:196-200 — **Gmail-only**: the IMAP decode is correct (imap_provider.py:234-244)
+  and must not regress, per CQ-71) · regression fixtures locking the upstream fixes.
+- **Files:** `pipeline.py`, `util.py`, `gmail_client.py`,
+  `tests/test_pipeline_correctness.py` (email fixtures from WP-03a run against **both** providers).
 - **Depends:** WP-03a. **Parallel:** YES with WP-03b, WP-07, WP-09; NO with WP-05/06/08 (backend lane).
-- **Size:** M.
+- **Size:** M (shrunk — two of the original trio landed upstream).
 - **Acceptance (all pytest):** raise injected after range 1 of a 3-range run → range 1 persisted+marked,
-  ranges 2–3 unmarked and re-fetched next run; worker raising `RuntimeError` yields an `ERROR:` line
-  on the stream, never a bare success; plain-text-only email in a 50-email fixture run → 49 releases
-  + 1 counted skip; linkless email → zero cached rows; `{'date':'garbage'}` in cache no longer
-  aborts dedupe; email HTML containing `=E2`/`id=3D` round-trips byte-identical.
+  ranges 2–3 unmarked and re-fetched next run; `{'date':'garbage'}` or `{'date':null}` in cache no
+  longer aborts dedupe (counted skip); an IMAP message with a missing/garbled `Date` header yields
+  one counted skip — never a raise in `dedupe_by_date`, never a `date:null` row in the cache; email
+  HTML containing `=E2`/`id=3D` round-trips byte-identical through the Gmail path while the IMAP
+  decode fixture still passes; regression: plain-text-only email in a 50-email fixture run → 49
+  releases + 1 counted skip; linkless email → zero cached rows.
 - **Verify:** pytest; manual kill-mid-populate + re-populate recovers the interrupted days.
 
 ### WP-05 · Store hardening floor
 - **Goal:** the JSON correctness floor (ARC-2a): locking, atomic unique-tmp writes, corruption
   sidestep, one persistence implementation, worker-owned populate lock.
 - **Scope:** CQ-17 / LOG-4 / PY-12 · CQ-18 / PY-8 / ARCH-1 / LOG-13 / PERF-6 · CQ-30 / PY-15 ·
-  POPULATE_LOCK released in worker `finally` (server.py:619-620 half of JS-10's server side).
+  POPULATE_LOCK released in worker `finally` (server.py:703-704 half of JS-10's server side).
 - **Files:** `json_store.py` (new), `session_store.py`, `server.py` (delete `_load_set`/`_save_set`/
-  `_load_embed_cache`/`_save_embed_cache`, repoint; lock lifetime), `tests/test_store_hardening.py`.
+  `_load_embed_cache`/`_save_embed_cache` at server.py:94-166, repoint; lock lifetime),
+  `tests/test_store_hardening.py`.
 - **Depends:** WP-04 (same-file lane; also the pipeline reorder must precede the lock test that
   exercises it). **Parallel:** NO within the backend lane.
 - **Size:** M.
@@ -198,33 +239,47 @@ PHASE 4 — polish + packaging
 
 ### WP-06 · Backend quick wins + hygiene
 - **Goal:** the mechanical S-fixes with unambiguous answers.
-- **Scope:** CQ-01 (dead code — **deviation: do NOT delete `mark_dates_not_scraped`; WP-15/LOG-3
-  resurrects it — leave with a pointer comment**) · CQ-02 (untruthful messages, `--batch` text) ·
-  CQ-03 / PY-13 (reset-flag split) · CQ-04 (max_results clamp + JSON 400) · CQ-08 / PY-14
-  (`/clear-credentials` → `/clear-token`, one-line JS call-site update) · CQ-15 / PY-6 (markdown
-  link mangling) + SEC-8 (`javascript:` href scheme filter) · CQ-32 / LOG-19-delete-half (remove
-  parse-time `img_url`; `art_url` capture arrives in WP-12/WP-14).
-- **Files:** `gmail.py`, `pipeline.py`, `server.py`, `session_store.py`, `util.py`, `bcfeed.py`,
-  `dashboard.js` (one line), `tests/test_quick_wins.py`, golden updates (deliberate, reviewed).
-- **Depends:** WP-05 (backend lane); merge **after WP-07** for the one-line `dashboard.js` edit.
-- **Parallel:** NO (lane). **Size:** S/M.
+- **Re-scope at e363bf4:** CQ-08 (endpoint/behavior alignment — `/clear-credentials` now genuinely
+  clears keychain credentials) and CQ-15/PY-6 + SEC-8 (markdown link mangling + `javascript:`
+  filter, both fixed by markdown-it-py) are **resolved upstream** and leave this WP; CQ-08's
+  keychain residual folds into WP-13 (CQ-70). CQ-01 is re-pointed: the email decode block the audit
+  called dead is now **live** (bandcamp_email_parser.py:23-27 — do NOT delete it); the newly dead
+  pieces are the always-true all-None guard (pipeline.py:67) and the unreachable str-email fallback
+  (pipeline.py:42-46).
+- **Scope:** CQ-01 / PY-14 (dead code per the re-pointed list: pipeline.py:42-46 and :67; builtins
+  shadowing + `type(exc) ==` comparisons in gmail_client.py:257-276 — **deviation: do NOT delete
+  `mark_dates_not_scraped`; WP-15/LOG-3 resurrects it — leave with a pointer comment**) · CQ-02
+  (untruthful messages: `--batch` text now at gmail_client.py:285; `launch_dashboard` docstring in
+  bcfeed.py) · CQ-03 / PY-13 (reset-flag split, server.py:561-564) · CQ-04 (max_results clamp +
+  JSON 400, server.py:631) · CQ-32 / LOG-19-delete-half (remove parse-time `img_url` —
+  bandcamp_email_parser.py:16/106, util.py:37/44; `art_url` capture arrives in WP-12/WP-14).
+- **Files:** `gmail_client.py`, `bandcamp_email_parser.py`, `pipeline.py`, `server.py`,
+  `session_store.py`, `util.py`, `bcfeed.py`, `tests/test_quick_wins.py`.
+- **Depends:** WP-05 (backend lane). The former after-WP-07 ordering is void — CQ-08's one-line JS
+  edit no longer exists.
+- **Parallel:** NO (lane). **Size:** S.
 - **Acceptance:** pytest flag-matrix on `/reset-caches` (only the named store cleared);
-  `max_results=abc` → JSON 400, `max_results=999999` clamped; golden test shows exactly one
-  well-formed anchor for `[label](https://…)` and rejects `javascript:` hrefs; grep clean for
-  `--batch`, `img_url`, dead blocks; endpoint name/log/behavior agree.
+  `max_results=abc` → JSON 400, `max_results=999999` clamped; grep clean for
+  `--batch`, `img_url`, the listed dead blocks; the live decode block
+  (bandcamp_email_parser.py:23-27) untouched — its empty-body fixture still passes.
 - **Verify:** pytest + manual smoke (docs pages render, settings buttons work).
 
 ### WP-07 · Frontend correctness batch
 - **Goal:** the dashboard.js safety and honesty fixes that don't restructure anything.
+  (Line-shift note: dashboard.js refs moved +3 past line 60 at e363bf4, and a 392-line
+  provider/IMAP controller was appended at 1706-2093 — this WP does **not** touch that block;
+  known-issues.md carries the refreshed line anchors. The Load-Credentials modal typo was fixed
+  upstream — the dismiss-opens-picker behavior was not.)
 - **Scope:** CQ-21 / JS-1 / SEC-7 (esc()/DOM-build all release fields; http(s)-only href/iframe src) ·
-  CQ-05 / JS-9 / UX-16 (X/backdrop cancel; typo) · CQ-06 (clearTimeout in schedulePreload) · CQ-07
+  CQ-05 / JS-9 / UX-16 (X/backdrop cancel — all three dismissal paths still open the file picker,
+  dashboard.js:383-393) · CQ-06 (clearTimeout in schedulePreload) · CQ-07
   (backdrop semantics) · CQ-25-client-half / JS-6 / PERF-8 (`Map<url,Promise>` in-flight dedupe;
   cache-guard keyed off `embed_url` presence) · CQ-26 / JS-8 (one `setRowReadState`; clear
   `expandedKey`) · CQ-22-minimal / JS-2 / UX-15-partial (2–3 consecutive failures before modal,
   keep polling, auto-recover, retry affordance, derive apiHost once post-config — the banner
   redesign is WP-22) · JS-4 (count label persists) · CQ-27 / JS-14 (degrade on auxiliary fetch
   failure; surface persistence-POST failures).
-- **Files:** `dashboard.js`, `dashboard.html` (typo, modal buttons).
+- **Files:** `dashboard.js`, `dashboard.html` (modal buttons).
 - **Depends:** WP-02. **Parallel:** YES with WP-03a/03b, WP-04→05 lane, WP-09 (disjoint files).
 - **Size:** M.
 - **Acceptance:** a release titled `<img src=x onerror=alert(1)>` with `javascript:` URL renders as
@@ -237,28 +292,41 @@ PHASE 4 — polish + packaging
 
 ### WP-08 · Localhost lockdown completion
 - **Goal:** finish the security batch that needs coordinated server+client edits.
-- **Scope:** ARC-5b / SEC-4 (delete `_corsify` ACAO:* incl. SSE; Host validation → 403) · ARC-5c
-  (custom `X-BCFeed-Request: 1` header on all mutating routes; JS fetch wrapper adds it — SSE GET
+- **Extended at e363bf4 (SEC-11):** the mutating surface grew — `/provider-config` (POST) and
+  `/imap/discover` accept attacker-influencable JSON and make the server open outbound IMAP
+  connections; both must sit behind the same guards. One verified mitigation to preserve: the
+  stored IMAP password is only reused when the posted connection signature matches the saved
+  config (server.py:338-343) — never combine stored credentials with request-supplied targets.
+- **Scope:** ARC-5b / SEC-4 (delete `_corsify` ACAO:* incl. SSE — server.py:87-91, 637, 707; Host
+  validation → 403) · ARC-5c / SEC-11 (custom `X-BCFeed-Request: 1` header on **all** mutating
+  routes *including `/provider-config` and `/imap/discover`*; JS fetch wrapper adds it — SSE GET
   stays header-free, protected by Host check) · SEC-9 (generic error bodies; details to server log;
-  404 not 500 for missing files).
+  404 not 500 for missing files — the pattern now extends into `/provider-config`/`/imap/discover`
+  and the `CredentialStoreError` passthrough, which double as a host/port oracle).
 - **Files:** `server.py`, `dashboard.js` (fetch wrapper), `tests/test_lockdown.py`.
 - **Depends:** WP-06 (server lane) AND WP-07 (js lane) — last code WP of Phase 0.
 - **Parallel:** NO. **Size:** S/M.
-- **Acceptance (pytest + curl):** `Host: evil.example` → 403; `curl -X POST /reset-caches` without
-  the header → 403; no `Access-Control-Allow-Origin` on any response; error bodies contain no
-  paths/exception classes; app fully functional same-origin (Playwright smoke green).
+- **Acceptance (pytest + curl):** `Host: evil.example` → 403; `curl -X POST` to `/reset-caches`,
+  `/provider-config`, and `/imap/discover` without the header → 403 (and `/imap/discover` opens no
+  outbound connection); no `Access-Control-Allow-Origin` on any response; error bodies contain no
+  paths/exception classes/keyring internals; app fully functional same-origin, including the
+  provider-settings flow (Playwright smoke green).
 - **Verify:** pytest + Playwright smoke + manual cross-origin fetch attempt from a scratch page.
 
 ### WP-09 · Docs, licensing, dependency hygiene
 - **Goal:** repo-metadata debts cleared; no code.
-- **Scope:** CQ-60 (requirements dedupe/pin, `beautifulsoup4` not `bs4` shim; `requirements-dev.txt`
-  itself is owned by WP-03a — WP-09 does not touch it) ·
-  CQ-61 (README/SETUP one job each) · CQ-62 (LICENSE — **decision required from maintainer: MIT
+- **Scope:** CQ-60 (**re-verified at e363bf4**: the duplicate `requests` is already gone; the merge
+  added `keyring`, `markdown-it-py`, `linkify-it-py` unpinned — pin everything, replace the `bs4`
+  shim with `beautifulsoup4`, and note the Homebrew formula must gain the three new deps at next
+  release; `requirements-dev.txt` itself is owned by WP-03a — WP-09 does not touch it) ·
+  CQ-61 (README/SETUP one job each; **slot the new `IMAP_SETUP.md` into the doc map** — IMAP
+  host/app-password/folder setup only; re-diff before rewriting: the merge already gutted SETUP.md
+  by −132 lines) · CQ-62 (LICENSE — **decision required from maintainer: MIT
   recommended**) · CQ-63 (TODO.rtf → `docs/TODO.md`, preserve DONE history) · CQ-64-docs-half (one
   Python version story — 3.11; the VERSION constant code lands in WP-28) · CQ-65 pre-note staged
-  (final verification in WP-30).
-- **Files:** `README.md`, `SETUP.md`, `GMAIL_SETUP.md`, `privacy.md` (note only), `LICENSE` (new),
-  `docs/TODO.md` (new), `TODO.rtf` (deleted), `requirements.txt`, `.python-version`.
+  (final verification in WP-30 — now covering both providers' privacy claims).
+- **Files:** `README.md`, `SETUP.md`, `GMAIL_SETUP.md`, `IMAP_SETUP.md`, `privacy.md` (note only),
+  `LICENSE` (new), `docs/TODO.md` (new), `TODO.rtf` (deleted), `requirements.txt`, `.python-version`.
 - **Depends:** WP-01 only. **Parallel:** YES with everything in Phase 0 **except** WP-03b's golden
   generation (WP-09 merges first; see WP-03b soft-dep).
 - **Size:** S/M.
@@ -271,8 +339,14 @@ PHASE 4 — polish + packaging
 
 ## Phase 1 — Protocol + backend
 
-Phase 1 is deliberately lane-ordered: `server.py` is a hub file until WP-11's layering shrinks it.
-Lanes A and B run concurrently (disjoint files); everything else in this phase is sequential.
+Phase 1 is deliberately lane-ordered: `server.py` is a hub file (822 lines at e363bf4, grown from
+626 by ~120 lines of IMAP/provider plumbing) until WP-11's layering shrinks it.
+Lanes A and B run concurrently on **explicitly disjoint file sets** — the provider files are split
+between them: Lane A (WP-11/12) owns `server.py`, `bandcamp.py`, `session_store.py`, and
+`provider_factory.py` (the landing zone for the relocated IMAP plumbing); Lane B (WP-16) owns
+`gmail_client.py`, `gmail_provider.py`, `imap_client.py`, `imap_provider.py`,
+`bandcamp_email_parser.py`, and `pipeline.py`. Neither lane may cross that line (files contract,
+orchestration notes). Everything else in this phase is sequential.
 
 ### WP-10 · Typed SSE protocol + in-place completion
 - **Goal:** the populate stream carries structure, not prose; failure can never render as success;
@@ -282,10 +356,14 @@ Lanes A and B run concurrently (disjoint files); everything else in this phase i
   `auth|max_results|gmail|parse|internal`; emitter object replacing `log=queue.put`) · CQ-24 /
   JS-10 / UX-9-mechanics (client: typed-event handling, blip-vs-terminal distinction, refetch
   `/releases`+status instead of `window.location.reload()`) · re-point the max-results modal and
-  error routing at `code` fields (kills substring sniffing) · PERF-5-partial (no reload = no
-  wholesale re-download).
+  error routing at `code` fields (kills substring sniffing — note the merge reworded the server
+  message to `Maximum results reached ({found}/{max})`, server.py:684, while the client still
+  substring-matches `"Maximum results"` at dashboard.js:1468: exactly the wording-coupling ARCH-4
+  warns about) · PERF-5-partial (no reload = no wholesale re-download).
 - **Files:** `server.py`, `pipeline.py`, `dashboard.js`, `tests/test_sse_protocol.py`.
-- **Depends:** WP-04 (worker catch-all), WP-05 (lock lifetime). **Parallel:** NO — exclusive start
+- **Depends:** WP-04 (same-file lane — note the worker catch-all WP-04 originally supplied landed
+  upstream at server.py:679-688; WP-10 replaces its `ERROR:` prose with `event: error`), WP-05
+  (lock lifetime). **Parallel:** NO — exclusive start
   of Phase 1 (touches both hub files and the JS).
 - **Size:** M.
 - **Acceptance:** no substring matching on SSE payloads anywhere in the client (grep `"Maximum
@@ -296,26 +374,39 @@ Lanes A and B run concurrently (disjoint files); everything else in this phase i
 - **Verify:** pytest (stream content) + Playwright (no-reload assertion) + manual slow-populate run.
 
 ### WP-11 · Backend layering + cache-first embeds (Lane A)
-- **Goal:** non-HTTP concerns leave `server.py`; the embed cache is finally read; failures are
-  negative-cached in the LOG-20 record shape from day one.
-- **Scope:** ARC-3 / ARCH-8 (extract `docs_render.py` = CQ-31; `bandcamp.get_embed_meta(url)` =
-  cache lookup → fetch → parse → cache write; all remaining store IO through `session_store`/
-  `json_store`; **one static-dir route** for future `web/js/` replacing per-file routes — pre-work
-  for WP-18 so it never touches server.py) · CQ-20 / PY-10 (guarded `literal_eval`, generic JSON
+- **Goal:** non-HTTP concerns leave `server.py` (822 lines); the embed cache is finally read;
+  failures are negative-cached in the LOG-20 record shape from day one.
+- **Re-scope at e363bf4:** the markdown-renderer extraction is **done upstream** (markdown-it-py +
+  `templates/docs.html`, server.py:70-84) — CQ-31 is demoted to an optional ~15-line
+  `docs_render.py` move (renderer config + `DOC_LINK_MAP` + `_serve_markdown_doc`), do it only if
+  it helps the goldens. The provider abstraction and `bandcamp_email_parser.py` extraction this WP
+  once implied also landed upstream. **New layering debt replaces them:** ~120 lines of
+  IMAP/provider plumbing sit in server.py:278-395 (`_coerce_imap_port`, `_build_imap_config`,
+  `_open_imap_client`, `_imap_folder_rank`, `_discover_imap_folders`) and move to
+  `provider_factory.py` per ARC-3's target table.
+- **Scope:** ARC-3 / ARCH-8 (`bandcamp.get_embed_meta(url)` = cache lookup → fetch → parse →
+  cache write; all remaining store IO through `session_store`/`json_store`; IMAP plumbing →
+  `provider_factory.py`; **one static-dir route** for future `web/js/` replacing per-file routes —
+  pre-work for WP-18 so it never touches server.py) · CQ-20 / PY-10 (guarded `literal_eval` —
+  the fallback at bandcamp.py:17-20 is still uncaught at server.py:496; generic JSON
   error bodies, cache-first) · LOG-5 / PERF-2 (negative caching: `status ∈ {ok,error}` + `code` +
   `fetched_at` + retry TTL; `description:""` distinguishes fetched-none from never-fetched; lazy
   upgrade of legacy entries on read).
-- **Files:** `server.py`, `docs_render.py` (new), `bandcamp.py`, `session_store.py`,
-  `tests/test_layering.py`, `tests/test_embed_cache.py`.
-- **Depends:** WP-10. **Parallel:** YES with WP-16 (Lane B — disjoint files). NOT with WP-12/13.
+- **Files:** `server.py`, `bandcamp.py`, `session_store.py`, `provider_factory.py` (receives the
+  IMAP helpers), optional `docs_render.py`,
+  `tests/test_layering.py`, `tests/test_embed_cache.py`. **Must NOT touch** `imap_provider.py`,
+  `imap_client.py`, `gmail_*`, `bandcamp_email_parser.py`, `pipeline.py` — Lane B's files; this
+  contract is what keeps A ∥ B legal.
+- **Depends:** WP-10. **Parallel:** YES with WP-16 (Lane B — see files contract). NOT with WP-12/13.
 - **Size:** M/L.
-- **Acceptance:** `grep -n "requests\.\|BeautifulSoup\|json.dump\|open(" server.py` → no hits
-  outside bootstrap; two `/embed-meta` calls for one URL → one network fetch (mocked requests,
-  pytest); a 404 page is fetched once, recorded `status:error`, and not refetched before TTL;
-  non-literal meta attr → JSON `{error}` 502, not HTML 500; `docs_render` importable without Flask;
+- **Acceptance:** `grep -n "requests\.\|BeautifulSoup\|json.dump\|open(\|ImapClient(" server.py` →
+  no hits outside bootstrap; two `/embed-meta` calls for one URL → one network fetch (mocked
+  requests, pytest); a 404 page is fetched once, recorded `status:error`, and not refetched before
+  TTL; non-literal meta attr → JSON `{error}` 502, not HTML 500; the relocated IMAP discovery
+  helpers importable and testable without Flask (connection injected/mockable);
   goldens still pass.
 - **Verify:** pytest; manual embed playback on a real starred release (iframe still renders —
-  see risk R4).
+  see risk R4) + manual IMAP folder-discovery smoke through the settings panel.
 
 ### WP-12 · Polite fetcher + SSRF allowlist (Lane A)
 - **Goal:** one choke point for all Bandcamp traffic; SSRF closed.
@@ -323,10 +414,10 @@ Lanes A and B run concurrently (disjoint files); everything else in this phase i
   single soup passed to both extractors = PERF-3 parse-once) · ARC-5f / SEC-2 (https-only;
   `*.bandcamp.com` direct; other hosts only if the exact URL is a release-cache key; resolve-and-
   block private/link-local IPs; redirects: max one hop, re-validated; require `bc-page-properties`
-  before caching; uniform error bodies) · LOG-19-capture-half (`og:image` → `art_url` in the embed
-  record).
+  before caching; uniform error bodies — the unvalidated fetch is at server.py:487-494 at e363bf4) ·
+  LOG-19-capture-half (`og:image` → `art_url` in the embed record).
 - **Files:** `bandcamp.py`, `server.py` (route uses the validated entry point), `util.py` (if the
-  validator lives there), `tests/test_fetcher.py`.
+  validator lives there), `tests/test_fetcher.py`. Same Lane-A files contract as WP-11.
 - **Depends:** WP-11. **Parallel:** YES with WP-16. **Size:** M.
 - **Acceptance (pytest, mocked network + fake clock):** `http://…`, `https://192.168.1.1/…`,
   `https://example.com/album/x` (not cached) all 400 with identical bodies; cached custom-domain
@@ -335,62 +426,107 @@ Lanes A and B run concurrently (disjoint files); everything else in this phase i
   `og:image`.
 - **Verify:** pytest.
 
-### WP-16 · Gmail robustness (Lane B — concurrent with WP-11/12)
-- **Goal:** the Gmail edge survives library upgrades, rate limits, copy drift, and big backlogs.
-- **Scope:** LOG-17 / CQ-19 / PY-9 (batch callback API, no `_responses`, 429 backoff, per-message
-  404 = counted skip) · LOG-16 / PERF-7 / CQ-04-followup (early pagination stop, `maxResults`
-  passed through) · LOG-14 (two-stage matching: **starts with the fixture investigation** — collect
-  redacted real samples incl. locale variants; quoted-OR query; structural classifier; rejects =
-  counted skips) · LOG-15 (candidate link selection, decoy-footer resistant).
-- **Files:** `gmail.py`, `pipeline.py`, `tests/test_gmail_robustness.py`, `tests/fixtures/emails/*`
-  (additions).
+### WP-16 · Provider robustness: Gmail + IMAP (Lane B — concurrent with WP-11/12)
+- **Goal:** both email edges survive library upgrades, rate limits, copy drift, weak IMAP servers,
+  and big backlogs. (Renamed from "Gmail robustness": the e363bf4 provider abstraction doubled the
+  surface, and CQ-71's parity rule now applies to every fix here.)
+- **Re-scope at e363bf4:** the merge's stricter parsing already landed the first slice of the
+  structural gate (parser requires a "new release from" subject **and** a Bandcamp release URL) —
+  LOG-14 remains for the full two-stage classifier, locale variants, and quoted-OR query. All
+  Gmail items relocated to `gmail_client.py`. New: LOG-23/PY-17 (IMAP search recall) joins this WP —
+  it shares LOG-14's fixture investigation.
+- **Scope:** LOG-17 / CQ-19 / PY-9 (batch callback API, no `_responses` — gmail_client.py:267-290;
+  429 backoff; per-message 404 = counted skip; **IMAP twin:** per-message fetch timeout/error
+  handling in `imap_client.py`) · LOG-16 / PERF-7 / CQ-04-followup (early pagination stop,
+  `maxResults` passed through — gmail_client.py:244-257; the IMAP path likewise caps before
+  fetching bodies) · LOG-14 (two-stage matching: **starts with the fixture investigation** — collect
+  redacted real samples incl. locale variants; quoted-OR query; structural classifier in
+  `bandcamp_email_parser.py`; rejects = counted skips; exercised through both providers) · LOG-15
+  (candidate link selection, decoy-footer resistant — bandcamp_email_parser.py:41-49) · LOG-23 /
+  PY-17 (IMAP recall: a zero-result first-time IMAP scan never writes empty-day ledger records
+  without folder corroboration — gate the `persist_empty_date_range` call at pipeline.py:148-151;
+  run-summary diagnostics: `searched folder X, matched 0 of N sender messages`; the re-check UI
+  pairing is WP-15/WP-24) · CQ-71 (parity discipline: every fix tested against both provider paths
+  or explicitly documented IMAP-N/A).
+- **Files:** `gmail_client.py`, `gmail_provider.py`, `imap_client.py`, `imap_provider.py`,
+  `bandcamp_email_parser.py`, `pipeline.py`, `tests/test_provider_robustness.py`,
+  `tests/fixtures/emails/*` (additions). **Must NOT touch** `server.py`, `bandcamp.py`,
+  `session_store.py`, `provider_factory.py` — Lane A's files.
 - **Depends:** WP-04, WP-03a. **Parallel:** YES with WP-11→12 (Lane A). NOT with WP-10/13/14/15/17.
-- **Size:** M/L.
-- **Acceptance (pytest, mocked service):** callback pairing correct; single-batch 429 retries and
+- **Size:** L (grew — the IMAP path is new scope).
+- **Acceptance (pytest, mocked service/IMAP):** callback pairing correct; single-batch 429 retries and
   completes with a visible "retrying" progress event; over-cap search performs ≤ `ceil((cap+1)/500)`
   list calls; classifier fixture matrix (release album/track/custom-domain/"by artist" accepted;
-  receipt/reply/digest rejected as counted skips); decoy-footer fixture resolves the real link;
+  receipt/reply/digest rejected as counted skips) passes identically through both providers;
+  decoy-footer fixture resolves the real link; a deliberately wrong IMAP folder yields a visible
+  "0 Bandcamp messages" diagnostic and **zero** empty-day ledger writes;
   grep `_responses` → nothing.
-- **Verify:** pytest + one manual real populate of a known range (counts match pre-change run).
+- **Verify:** pytest + one manual real populate of a known range **per provider** (counts match
+  pre-change run).
 
-### WP-13 · OAuth: scope, token format, async connect
-- **Goal:** read-only scope as documented; token stored as 0600 JSON; no request thread ever blocks
-  on a human. **The one WP that forces user-visible re-auth — ship as a single release (risk R1).**
-- **Scope:** ARC-5d / SEC-3 (`gmail.readonly`; legacy-scope token detected on load → deleted →
-  `has_token:false` flow) · ARC-5e / SEC-5 (`Credentials.to_json()` atomic 0600; pickle→JSON
-  one-time migration then unlink; no `import pickle` left) · SEC-6 / ARC-3-slice / UXP-4-backend
-  (`/load-credentials` validates client-secret shape, saves atomically, returns immediately;
-  interactive flow runs off-thread with ~3 min timeout; new status surface `waiting|done|failed`
-  for the UI; `run_local_server` never invoked on a request thread).
-- **Files:** `gmail.py`, `server.py`, `dashboard.js` (minimal status polling; full modal UX is
-  WP-23), `tests/test_oauth.py`, `privacy.md` + `SETUP.md`/`GMAIL_SETUP.md` scope strings (CQ-65).
-- **Depends:** WP-12 AND WP-16 merged (touches both `server.py` and `gmail.py`). **Parallel:** NO.
-- **Size:** M.
+### WP-13 · OAuth: scope fix, async connect, legacy-migration retirement
+- **Goal:** read-only scope as documented; no request thread ever blocks on a human; the legacy
+  pickle window closes. **The one WP that forces user-visible re-auth — ship as a single release
+  (risk R1).**
+- **Re-scope at e363bf4:** ARC-5e/SEC-5 (token as JSON, tight perms) is **resolved upstream** —
+  token, client secret, and IMAP password are all keychain-stored via `credential_store.py`,
+  strictly better than the planned JSON-file-plus-chmod. What this WP owned there shrinks to the
+  residual: retire the legacy `token.pickle` migration path (SEC-10). The IMAP connect path already
+  has the right non-blocking shape and is untouched here.
+- **Scope:** ARC-5d / SEC-3 (`gmail.readonly` at gmail_client.py:217 — still hardcoded
+  `mail.google.com`; legacy-scope token detected on load → keychain token cleared →
+  `has_token:false` flow) · SEC-10 / CQ-70 / ARC-5e-residual (delete `_load_legacy_token`'s
+  `pickle.load` fallback and `import pickle` — gmail_client.py:128-144; unlink any stale
+  `token.pickle`; remove vestigial `TOKEN_PATH`/`token.pickle` constants from `paths.py`; keychain
+  errors surface as generic messages, details to the server log) · SEC-6 / CQ-72 / ARC-3-slice /
+  UXP-4-backend (`/load-credentials` validates client-secret shape, saves to keychain — the save
+  half already exists at server.py:606 — and returns immediately; interactive flow runs off-thread
+  with ~3 min timeout; new status surface `waiting|done|failed` for the UI; `run_local_server`
+  never invoked on a request thread — today it still is, server.py:611 → gmail_client.py:235) ·
+  CQ-08-residual (confirm full-vs-partial keychain clear semantics; a stale pickle can never
+  re-authorize after `/clear-credentials`).
+- **Files:** `gmail_client.py`, `credential_store.py`, `server.py`, `paths.py`, `dashboard.js`
+  (minimal status polling; full modal UX is WP-23), `tests/test_oauth.py`, `privacy.md` +
+  `SETUP.md`/`GMAIL_SETUP.md` scope strings (CQ-65).
+- **Depends:** WP-12 AND WP-16 merged (touches both `server.py` and `gmail_client.py`).
+  **Parallel:** NO.
+- **Size:** M (down slightly — the token-format work landed upstream).
 - **Acceptance:** grep finds exactly one scope string, `gmail.readonly`; legacy full-scope token
-  invalidated on first launch and reconnect flow triggers; `stat -f %Lp token.json` = 600; no
-  `import pickle`; `/load-credentials` returns < 1 s regardless of OAuth state (pytest with a
-  stubbed flow); abandoning the consent tab times out to `failed` without a stuck thread.
+  invalidated on first launch and reconnect flow triggers; no `import pickle` and no `token.pickle`
+  reference anywhere; no token or client-secret bytes on disk after a full auth cycle (data-dir
+  inspection); `/load-credentials` returns < 1 s regardless of OAuth state (pytest with a
+  stubbed flow); abandoning the consent tab times out to `failed` without a stuck thread; raw
+  `CredentialStoreError` text never reaches a client.
 - **Verify:** pytest + one real end-to-end reconnect on the maintainer's account (manual, gated).
 
 ### WP-14 · Schema v2: migrations + model completion
-- **Goal:** one migration event covering all store-shape changes; the data model gains its future.
-- **Scope:** LOG-21 (schema version + ordered `migrate()` + `.pre-v2` backups + `source` field) ·
-  LOG-11 (single per-day ledger; `no_results_dates.json` folded in and deleted) · LOG-9 (canonical
+- **Goal:** one migration event covering all store-shape changes; the data model gains its future —
+  including provider awareness (two providers ship as of e363bf4, and neither releases nor the
+  ledger record which one produced them).
+- **Scope:** LOG-21 (schema version + ordered `migrate()` + `.pre-v2` backups + `source` field —
+  **immediately useful now**, populated from `provider_factory.get_current_provider_type()` at the
+  pipeline level) · LOG-11 (single per-day ledger; `no_results_dates.json` folded in and deleted) ·
+  LOG-22 / PY-16 **schema half** (each ledger day records its producing provider; the
+  switch-behavior half is WP-15's) · LOG-9 (canonical
   URL normalization applied at parse + all four store lookups; one-shot key rewrite with collision
-  merge) · LOG-20 (embed record is the single owner of enrichment state; `embed_url` derived not
-  stored; `/releases` overlays light fields + `has_description` only — descriptions leave the
-  payload = PERF-5 core) · LOG-10-contract-half (keep-last docstring; `item_type` precedence) ·
-  LOG-19 finish (strip stale `img_url` keys in the rewrite).
-- **Files:** `session_store.py`, `util.py`, `pipeline.py`, `gmail.py`, `server.py`,
+  merge) · LOG-8-residual (the same one-shot rewrite sweeps pre-existing null-URL junk rows — the
+  producer gate landed upstream) · LOG-20 (embed record is the single owner of enrichment state;
+  `embed_url` derived not stored; `/releases` overlays light fields + `has_description` only —
+  descriptions leave the payload = PERF-5 core) · LOG-10-contract-half (keep-last docstring;
+  `item_type` precedence) · LOG-19 finish (strip stale `img_url` keys in the rewrite).
+- **Files:** `session_store.py`, `util.py`, `pipeline.py`, `server.py`,
   `migrations.py` (new, or in `json_store.py`), `paths.py` (EMPTY_DATES_PATH removed),
   `dashboard.js` (detail row fetches description lazily — small), `tests/test_migrations.py`.
+  (No provider-file edits: `source` is set in the pipeline, not the providers.)
 - **Depends:** WP-13 (lane). **Parallel:** NO. **Size:** L.
 - **Acceptance (pytest):** migration round-trip on fixture stores incl. starred+viewed overlap and
   URL-case collisions (union merge, star preserved); second start performs no migration; fresh
   install writes schema 2 directly; `HTTP://Artist.Bandcamp.com/album/X/?x=1#f` and
   `https://artist.bandcamp.com/album/X` share one row + star/seen/embed state; grep finds no
   `EMPTY_DATES_PATH` reader; `/releases` payload carries no description bodies and every row
-  carries `source`; expanding a row still shows the description via one cached request (Playwright).
+  carries `source`; every ledger day records its producing provider; pre-existing null-URL rows
+  gone after the rewrite; expanding a row still shows the description via one cached request
+  (Playwright).
 - **Verify:** pytest + Playwright smoke + manual upgrade test against a copied real data dir
   (backups present, stars intact) — risk R2.
 
@@ -412,26 +548,38 @@ Lanes A and B run concurrently (disjoint files); everything else in this phase i
   batch endpoint marks 300 URLs in one write with zero lost under concurrent toggles.
 - **Verify:** pytest + manual preload of a real month (observe pacing in server log).
 
-### WP-15 · Refresh semantics: settling window + re-check + timezone coherence
+### WP-15 · Refresh semantics: settling window + re-check + timezone coherence + provider switches
 - **Goal:** the append-only-cache trap is dismantled: recent days self-heal, any range is
-  re-checkable, day bucketing matches the calendar.
+  re-checkable, day bucketing matches the calendar, and switching email providers can never
+  silently serve the old provider's coverage as the new one's.
 - **Scope:** LOG-2 (trailing N=3 settling window: ledger-skip not release-skip; ledger is sole
   authority in `cached_releases_for_range`; `/scrape-status` reports window days unchecked) ·
   LOG-3 / UX-12-backend / UXP-11-backend (`refresh=1` on the stream endpoint; resurrect
-  `mark_dates_not_scraped`; empty-again days recorded empty) · LOG-12 (bucket by local date; ±1 day
-  query pad for refresh scans only; all "today" logic via `util.today()`).
-- **Files:** `session_store.py`, `pipeline.py`, `gmail.py`, `server.py`,
-  `tests/test_refresh_semantics.py`.
-- **Depends:** WP-14 (unified ledger), WP-10 (SSE error contract), WP-04 (LOG-1 ordering).
+  `mark_dates_not_scraped`; empty-again days recorded empty) · LOG-12 (bucket by local date — the
+  bucketing now lives in the providers, so the shared date helper lands on the `EmailProvider`
+  interface and both adapters use it; ±1 day query pad for refresh scans only; all "today" logic
+  via `util.today()`) · LOG-22 / PY-16 **behavior half** (on provider switch, days marked done by
+  the other provider are offered for re-check — or the switch is explicitly blocked with a
+  message; decision (a) of LOG-22: single-provider-at-a-time with prompted re-check, per the logic
+  plan; consumes WP-14's provider-tagged ledger).
+- **Files:** `session_store.py`, `pipeline.py`, `email_provider.py`, `gmail_provider.py`,
+  `imap_provider.py`, `server.py`, `tests/test_refresh_semantics.py`.
+- **Depends:** WP-14 (unified, provider-tagged ledger), WP-10 (SSE error contract), WP-04 (LOG-1
+  ordering); WP-16's LOG-23 gate precedes it in lane order (an IMAP folder must be validated before
+  its empty days can be trusted, let alone re-checked).
 - **Parallel:** **YES with WP-18** (disjoint files — WP-18 no longer touches `server.py` thanks to
   WP-11's static route, and WP-15 touches no JS). NOT with any Phase-1 WP.
-- **Size:** M.
+- **Size:** M/L (provider-switch semantics added).
 - **Acceptance (pytest, frozen clock):** populate Jun 1–30 on Jul 2 → Jun 30/Jul 1 queried and
   persisted but absent from the ledger; re-populate re-queries only those days; `refresh=1` on a
-  fully-checked range re-queries Gmail, late email appears, zero duplicate rows, stars/seen/embeds
-  untouched; `Date: … 23:30:00 -0800` fixture buckets to the local date; refresh pad picks up the
-  boundary email; no direct `date.today()` calls (grep).
-- **Verify:** pytest + manual re-check of a real range ("Added 0 releases" on an unchanged range).
+  fully-checked range re-queries the provider, late email appears, zero duplicate rows,
+  stars/seen/embeds untouched; `Date: … 23:30:00 -0800` fixture buckets to the local date
+  identically through both providers; refresh pad picks up the
+  boundary email; populate June via Gmail then switch the active provider to IMAP → June is
+  re-queried (or the switch is explicitly refused) — never silently served from the Gmail-era
+  ledger; no direct `date.today()` calls (grep).
+- **Verify:** pytest + manual re-check of a real range ("Added 0 releases" on an unchanged range)
+  + manual provider switch on a copied real data dir.
 
 ---
 
@@ -443,13 +591,20 @@ All Phase-2 agents read `docs/improvements/ui-redesign.md` (UIR-*) **before** st
 
 ### WP-18 · ES-module split + render/ownership discipline
 - **Goal:** the mechanical decomposition (behavior-preserving, smoke-verified) plus the single-owner
-  and coalescing rules that fix the render-storm family.
+  and coalescing rules that fix the render-storm family. The IIFE is 2,113 lines at e363bf4 — the
+  merge appended its 392-line provider/IMAP controller *inside* the IIFE (dashboard.js:1706-2093),
+  which is exactly the feature-cost failure this WP exists to end.
 - **Scope:** ARC-4 / ARCH-5 (module layout `web/js/{config,api,state,table,calendar,status,modals,
-  populate,main}.js`; endpoints derived once post-config; DocumentFragment full rebuilds; in-place
+  populate,settings,main}.js` — **`settings.js` is new in the layout**: the provider/IMAP
+  controller moves there nearly verbatim; endpoints derived once post-config; DocumentFragment full
+  rebuilds; in-place
   row-state mutation; `scheduleRender` microtask coalescing; day→unseen-count map per render;
   delegated tbody listeners = PERF-4-partial) · CQ-23 / JS-3 (isPopulating; button/log single
   writer) · JS-11 / ARCH-6 / PERF-1-frontend (state-mutate → one batched POST via WP-17's endpoint
-  → one render) · CQ-33 / JS-12 (dead-code sweep) · CQ-34 / JS-15 (one log write API) · CQ-36 /
+  → one render) · CQ-33 / JS-12 (dead-code sweep — incl. the double endpoint derivation at
+  dashboard.js:9-21 vs 48-58 and the two settingsBtn listeners) · CQ-34 / JS-15 (one log write
+  API — the provider controller's JS-set inline status colors are a third write pattern; they
+  become classes here or in WP-20 per UIR-30) · CQ-36 /
   ARCH-11 / JS-13-partial (fake config keys + dead branches deleted; theme decision itself lands in
   WP-20).
 - **Files:** `web/js/*` (new), `dashboard.js` (deleted), `dashboard.html` (script tag). **No
@@ -466,32 +621,53 @@ All Phase-2 agents read `docs/improvements/ui-redesign.md` (UIR-*) **before** st
 
 ### WP-19 · Inline-style extraction + naming corrections
 - **Goal:** the mechanical substrate for the retheme — after this WP, WP-20 edits (almost) one file.
-- **Scope:** CQ-35 (every inline `style=` → classes; JS-injected colors → classes; 1:1
+- **Scope:** CQ-35 (every inline `style=` → classes — **~60 attrs at e363bf4, the merge added ~25
+  in the IMAP panel** (html:175-216), which become `.form-row`/`.form-col` layout classes per
+  UIR-30 §5; JS-injected colors → classes, incl. the provider controller's inline status colors
+  (dashboard.js:1736-1745); 1:1
   computed-style preservation, no redesign) · CQ-37 / UI-5-partial (`unseen-day` → `populated-day`;
   dead `.calendar-day.scraped` glow rules deleted; `wireframe-*` → neutral names) · UI-17-partial
-  (dead CSS rules purged, `--header-bg` defined or removed).
+  (dead CSS rules purged — **now including the superseded first-generation settings rules at
+  css:753-783, silently shadowed by the appended block** (UIR-30 §1); `--header-bg` defined or
+  removed).
 - **Files:** `dashboard.html`, `dashboard.css`, `web/js/*` (class writes).
 - **Depends:** WP-18. **Parallel:** NO. **Size:** M.
-- **Acceptance:** `grep 'style=' dashboard.html` → only JS-managed `display` toggles or zero; no
-  color/size literals injected from JS; grep clean for `unseen-day`/`wireframe`/dead `.scraped`;
-  before/after screenshots pixel-identical in dark mode.
+- **Acceptance:** `grep 'style=' dashboard.html` → only JS-managed `display` toggles or zero (from
+  ~60); no color/size literals injected from JS; grep clean for `unseen-day`/`wireframe`/dead
+  `.scraped`; exactly one generation of `.settings-panel` rules;
+  before/after screenshots pixel-identical in dark mode (incl. the settings/provider panel).
 - **Verify:** Playwright screenshot diff (dark) + smoke.
 
 ### WP-20 · Token system + CSS rewrite ("Calm Slate")
 - **Goal:** the full visual re-skin per the UIR spec: calm, both themes correct, zero AI-smell.
-- **Scope:** all UIR-* token/component items, implementing fixes for UI-1, UI-2, UI-3, UI-4, UI-6,
+- **Extended at e363bf4 (UIR-30 / UI-19):** the merge appended a *third* styling generation
+  (css:837-1058) — structurally the app's best surface (keep its architecture, per global rule 1)
+  but written outside the token discipline. This WP normalizes it: fold `.button.primary`/
+  `.button.danger` into the shared UIR-14 variants; the hardcoded cyan focus ring (css:940) →
+  global focus tokens; 11px-uppercase section titles → `.micro-label`; keep the `.form-input`/
+  `.form-select`/`.form-label` names but re-express on tokens (they *are* UIR-15's spec, shipped
+  early); white-alpha hover fill → `var(--control-bg-hover)`; the inline info-circle SVG joins the
+  UIR-20 sprite; JS-set status colors → semantic `--success-text`/`--danger-text` classes.
+- **Scope:** all UIR-* token/component items **including UIR-30**, implementing fixes for UI-1,
+  UI-2, UI-3, UI-4, UI-6,
   UI-7, UI-8, UI-9-visual, UI-10, UI-11, UI-13-visual, UI-14 (≈1100px breakpoint), UI-15, UI-16,
-  UI-17, UI-18, UI-12-focus-tokens · JS-13 / UX-18 / ARCH-11-remainder (theme toggle exposed,
-  `prefers-color-scheme` default, persist only explicit choice — or, if UIR declares dark-only v1,
-  no dead theme knob anywhere) · version string leaves the H1 (rendered target moves to Settings;
+  UI-17, UI-18, UI-19, UI-12-focus-tokens · JS-13 / UX-18 / ARCH-11-remainder (theme toggle —
+  **already exposed in Settings at e363bf4**; what remains: seed from `prefers-color-scheme`,
+  persist only explicit choice, kill the force-dark default at dashboard.js:288-293) · version
+  string leaves the H1 (rendered target moves to Settings;
   the constant itself is WP-28).
-- **Files:** `dashboard.css` (rewritten), `dashboard.html`, `web/js/theme+status bits`.
+- **Files:** `dashboard.css` (rewritten, 1,058 → ~750-950 disciplined lines per UIR §14),
+  `dashboard.html`, `web/js/theme+status bits`.
 - **Depends:** WP-19; UIR spec final. **Parallel:** NO. **Size:** L.
 - **Acceptance:** every audit-measured contrast pair passes 4.5:1 **in both themes** (primary
   button, calendar day numbers, error bar, log text, badges — the exact UI-1..UI-4 sample set);
   no ambient gradients/glow shadows/hatches (grep for `radial-gradient`, `box-shadow.*rgba` glow
-  patterns, repeating-linear-gradient); one SVG icon system (no emoji-as-icon, no text carats); one
-  accent token + one danger token (grep `#64a8ff` → nothing); sentence-case microcopy classes; at
+  patterns, repeating-linear-gradient); one SVG icon system (no emoji-as-icon, no text carats, no
+  inline info-SVG); one
+  accent token + one danger token (grep `#64a8ff`, `#ff6b6b`, `#b83a3a` → nothing); the UIR §11
+  deletion greps return zero **for the appended settings block too**; the settings/provider panel
+  renders correctly in both themes (today its hover fill and focus ring fail light mode);
+  sentence-case microcopy classes; at
   1000px width no clipped column; `:focus-visible` visible on all interactive elements.
 - **Verify:** scripted contrast check on the token table + Playwright screenshots of the audit's
   screenshot set **in both themes** compared against `docs/current-state/screenshots/` for intent
@@ -529,7 +705,9 @@ touch `state.js`/`main.js` trivially — later merges rebase; see orchestration 
   banner; table stays browsable; mutations disabled with explanation; auto-reconnect toast;
   full-screen backdrop deleted) · UXP-13-finish / UX-9 (toast `Added N releases · <range>`;
   transient new-row highlight) · UI-9-replacement (Details view: monospace, muted, auto-height,
-  collapsed empty) · aria-live on progress region (JS-7 slice).
+  collapsed empty) · aria-live on progress region (JS-7 slice) · keychain/credential-store
+  failures mapped into the banner vocabulary (new at e363bf4: `CredentialStoreError` /
+  keychain-unavailable becomes a plain-language banner per UXP-1's map, never raw exception text).
 - **Files:** `web/js/status.js`, `web/js/populate.js`, new `web/js/feedback.js` (toast/banner),
   `web/js/main.js`, `dashboard.html`, `dashboard.css` (component styles from WP-20 tokens).
 - **Depends:** WP-10 (hard), WP-18, WP-20, WP-21. **Parallel:** NO (first of Phase 3). **Size:** L.
@@ -544,25 +722,41 @@ touch `state.js`/`main.js` trivially — later merges rebase; see orchestration 
   covers the server side + manual screen-reader spot check.
 
 ### WP-23 · Onboarding (parallel worktree A)
-- **Goal:** first run is a sequenced checklist, the OAuth hop is announced and supervised,
-  Settings is reorganized, destructive actions are confirmed and honest.
-- **Scope:** UXP-3 / UX-1, UX-5-partial (first-run panel in main content; detected step state;
-  `Credentials Needed` modal + auto-open-Settings deleted) · UXP-4-UI / UX-2, UX-16 (pre-announce
-  consent tab + unverified-app guidance; waiting state with Cancel; timeout → retry) · UXP-5 /
-  UX-18-settings (status first, Preferences, danger zone last; version in About) · UXP-6 (Check the
+- **Goal:** first run is a sequenced checklist that **branches by provider**, the OAuth hop is
+  announced and supervised, Settings is finished (the merge already rebuilt its structure),
+  destructive actions are confirmed and honest.
+- **Re-scope at e363bf4:** UXP-5's structural reorganization **landed upstream** (labeled
+  Appearance / Email Configuration / Data & Storage sections; theme toggle exposed) — only its
+  residual remains here. UXP-3 now specifies a two-card provider choice (IMAP `~5 minutes` vs
+  Google sign-in `~20 minutes, one time` — honest costs per the re-scoped spec); the shipped IMAP
+  panel (connect → discover → recommended folder) is **re-hosted inside checklist step 2, not
+  rebuilt**. UXP-4 applies to the Gmail path only — the IMAP path's bounded inline verification is
+  already the right shape.
+- **Scope:** UXP-3 / UX-1, UX-5-partial (first-run panel in main content with provider-choice
+  cards + detected step state via `/provider-config` GET; `Credentials Needed` modal +
+  auto-open-Settings deleted; the IMAP app-password requirement stated as visible text, not a
+  hover tooltip) · UXP-4-UI / UX-2, UX-16 (Gmail path: pre-announce
+  consent tab + unverified-app guidance; waiting state with Cancel; timeout → retry) ·
+  UXP-5-residual / UX-18-settings (connection-status line first in the email section — the backend
+  already reports `has_gmail_credentials`/`has_password`; version in About; danger-zone styling
+  from WP-20 tokens) · UXP-6 (Check the
   last 30 days starter — selects the range visibly, then fetches) · UXP-7 / UX-4 (delete-data
   dialog enumerating scope; stars/seen checkbox default OFF; post-action toast).
-- **Files:** `web/js/onboarding.js` (new), `web/js/modals.js`, `web/js/settings.js` (split from
-  modals if cleaner), `dashboard.html`, `dashboard.css`.
+- **Files:** `web/js/onboarding.js` (new), `web/js/modals.js`, `web/js/settings.js` (exists after
+  WP-18's split), `dashboard.html`, `dashboard.css`.
 - **Depends:** WP-22 (primitives), WP-13 (async OAuth status), WP-06 (CQ-03 flags). **Parallel:**
   worktree-parallel with WP-24/25; merges first. **Size:** L.
-- **Acceptance:** fresh data dir boots into the checklist, no modal; kill mid-setup + relaunch
-  restores the detected step; consent tab never appears unannounced; abandoning the Google tab is
-  recoverable in one click; ✕/backdrop never open the file picker; no destructive action within 2
+- **Acceptance:** fresh data dir boots into the checklist showing both provider cards with honest
+  time estimates, no modal; kill mid-setup + relaunch
+  restores the detected step (client config / token / IMAP config / data present); switching paths
+  mid-setup loses nothing; consent tab never appears unannounced (Gmail); abandoning the Google
+  tab is recoverable in one click; the IMAP app-password hint is visible text; ✕/backdrop never
+  open the file picker; no destructive action within 2
   clicks of the checklist; star → delete-downloaded-data (default) → re-fetch → star intact
   (Playwright); one click from post-connect state starts a 30-day fetch with the calendar visibly
-  selected.
-- **Verify:** Playwright first-run spec (fresh `BCFEED_DATA_DIR`) + manual real-OAuth walkthrough.
+  selected; Settings opens showing connection state per provider without any action taken.
+- **Verify:** Playwright first-run spec (fresh `BCFEED_DATA_DIR`, **both provider paths** — IMAP
+  against a mocked `/imap/discover`) + manual real-OAuth walkthrough.
 
 ### WP-24 · Core loop: one mental model + enrichment visibility (parallel worktree B)
 - **Goal:** "Get releases" is the only fetch concept; enrichment is ambient, visible per-row,
@@ -613,22 +807,33 @@ touch `state.js`/`main.js` trivially — later merges rebase; see orchestration 
 - **Verify:** Playwright (filters, undo, empty states) + manual calendar review in both themes.
 
 ### WP-26 · Wording enforcement sweep + copy record
-- **Goal:** zero banned vocabulary anywhere a user can see; docs and UI speak the same language.
+- **Goal:** zero banned vocabulary anywhere a user can see; docs and UI speak the same language —
+  across both provider paths.
 - **Scope:** UXP-1 / UX-6 full map over all remaining strings in `web/js`, `dashboard.html`,
-  `pipeline.py`, `gmail.py`, `server.py` (SSE `message` fields; the protocol's `text` mirror field
-  is deleted here — ARC-1's one-release migration window closes) · inclusive date display
+  `pipeline.py`, `gmail_client.py`, `gmail_provider.py`, `imap_client.py`, `imap_provider.py`,
+  `provider_factory.py`, `credential_store.py`, `server.py` (SSE `message` fields; the protocol's
+  `text` mirror field
+  is deleted here — ARC-1's one-release migration window closes) · **the new Email-provider-settings
+  wording map** (UXP-1's e363bf4 subsection: title-case labels → sentence case, `Save IMAP
+  Configuration` → `Save mail settings`, keychain error copy, hover-only app-password tooltip →
+  visible help text; note most of the shipped IMAP copy is already plain and inline — keep it) ·
+  vocabulary ruling: **`IMAP` itself is allowed** (it's the term the user's mail provider uses);
+  `provider`/`configuration`/`credentials` are banned in favor of `connection`/`settings`/
+  `access file` · inclusive date display
   everywhere (no end-exclusive leak) · every disabled control's tooltip says why + what enables it ·
-  `docs/copy.md` records the vocabulary rules · README/SETUP updated so UI names match docs.
-- **Files:** all of the above + `docs/copy.md` (new), README/SETUP touch-ups, golden updates.
+  `docs/copy.md` records the vocabulary rules · README/SETUP/IMAP_SETUP updated so UI names match docs.
+- **Files:** all of the above + `docs/copy.md` (new), README/SETUP/IMAP_SETUP touch-ups, golden updates.
 - **Depends:** WP-23, WP-24, WP-25 (sweeps the final UI). **Parallel:** NO — deliberately last and
   exclusive (touches everything).
 - **Size:** M.
 - **Acceptance:** scripted grep of user-visible strings finds zero instances of
-  populate/preload/cache(d)/scrape(d)/parse/query/token/credentials/embed/proxy in any user-facing
-  string (code identifiers exempt); all displayed date ranges inclusive and matching the selection;
+  populate/preload/cache(d)/scrape(d)/parse/query/token/credentials/provider/configuration/embed/
+  proxy in any user-facing
+  string (code identifiers exempt; `IMAP` exempt per the ruling); all displayed date ranges
+  inclusive and matching the selection;
   `text` field gone from SSE payloads and unused client-side; goldens updated deliberately.
 - **Verify:** the grep script (checked into `tests/`) + full Playwright suite + manual read-through
-  of every screen against the UXP-1 tables.
+  of every screen against the UXP-1 tables (including the provider-settings map).
 
 ---
 
@@ -636,8 +841,14 @@ touch `state.js`/`main.js` trivially — later merges rebase; see orchestration 
 
 ### WP-27 · Performance polish
 - **Goal:** close the remaining measured PERF items and re-run the audit benchmarks.
+  (Benchmark note: the audit's 5k numbers were measured at 598a9dd and **not re-run at e363bf4** —
+  no hot path changed, but re-baseline here before claiming wins. One new data point to record:
+  IMAP fetch is per-message rather than batched (imap_provider.py:156-169), so IMAP populate is
+  slower for the same message count — documented behavior (README notes it), not a defect to fix
+  here.)
 - **Scope:** PERF-4-finish (default date filter = most recent month, not min→max; re-measure first
-  paint at 5k) · PERF-5 verification (payload now ~1.2 MB at 5k per the audit benchmark — confirm) ·
+  paint at 5k) · PERF-5 verification (payload was 7.6→~1.2 MB at 5k per the audit benchmark —
+  confirm post-WP-14) ·
   PERF-8 verification (dedupe landed in WP-07 — confirm closed) · re-run `perfbench`-style checks
   for the PERF-1 and PERF-3 acceptance numbers.
 - **Files:** `web/js/state.js`/`table.js` (default range), `tests/` bench notes.
@@ -651,9 +862,11 @@ touch `state.js`/`main.js` trivially — later merges rebase; see orchestration 
 - **Goal:** the tiny prerequisites that are valuable even if the .app never ships.
 - **Scope:** ARC-6-prereqs / ARCH-9 / CQ-64-code-half (single `VERSION` constant surfaced via
   `/config.json` and Settings→About; `pyproject.toml` with pinned deps as the single source
-  superseding requirements.txt; `resource_path()` in `paths.py` used by all bundled assets; delete
-  the dead `_MEIPASS` credentials branch in `gmail.py`).
-- **Files:** `paths.py`, `gmail.py`, `server.py`, `web/js/settings` bit, `pyproject.toml`,
+  superseding requirements.txt — **incl. the e363bf4 additions `keyring`, `markdown-it-py`,
+  `linkify-it-py`, currently unpinned and absent from the Homebrew formula**; `resource_path()` in
+  `paths.py` used by all bundled assets; delete
+  the dead `_MEIPASS` credentials branch — it survived the refactor at `gmail_client.py:52-55`).
+- **Files:** `paths.py`, `gmail_client.py`, `server.py`, `web/js/settings` bit, `pyproject.toml`,
   `requirements.txt` (pointer or generated).
 - **Depends:** WP-09; schedule after Phase 1 (server.py quiet) — any time before WP-29. **Parallel:**
   YES with WP-27. **Size:** S/M.
@@ -666,7 +879,8 @@ touch `state.js`/`main.js` trivially — later merges rebase; see orchestration 
 - **Goal:** double-clickable distribution per ARC-6's decision: PyInstaller onedir `.app`, optional
   `rumps` menu-bar shell; Homebrew tap stays primary.
 - **Scope:** ARC-6 (spec file with `datas` via `resource_path()`; hidden-imports for
-  `googleapiclient` — time-boxed, see risk R5; ad-hoc signing + documented right-click-open;
+  `googleapiclient` **and `keyring`'s backend discovery** (joined the watchlist at e363bf4) —
+  time-boxed, see risk R5; ad-hoc signing + documented right-click-open;
   GitHub release asset). Optional 6b: `rumps` menu-bar entry (Open dashboard / Quit).
 - **Files:** `bcfeed.spec` (new), `packaging/` scripts, docs section.
 - **Depends:** WP-28, WP-30 (version/tag). **Parallel:** NO (release train). **Size:** L.
@@ -678,12 +892,14 @@ touch `state.js`/`main.js` trivially — later merges rebase; see orchestration 
 
 ### WP-30 · Docs final pass + release
 - **Goal:** docs match the shipped product; a tagged, consistent release exists.
-- **Scope:** CQ-65 (privacy/SETUP/GMAIL_SETUP state `gmail.readonly` + one-time re-auth note) ·
+- **Scope:** CQ-65 (privacy/SETUP/GMAIL_SETUP state `gmail.readonly` + one-time re-auth note;
+  **new at e363bf4:** privacy.md also states that IMAP credentials and the Gmail token live in the
+  system keychain and that bcfeed only reads mail — claims kept true for *both* providers) ·
   UXP-12-docs (shortcuts section) · README workflow section refreshed with final vocabulary +
   new screenshots · tag `v1.1.0` (or maintainer's choice) in this repo · Homebrew formula
-  regenerated from pinned deps.
-- **Files:** `README.md`, `SETUP.md`, `GMAIL_SETUP.md`, `privacy.md`, screenshots, tag + formula
-  (tap repo).
+  regenerated from pinned deps (must gain `keyring`/`markdown-it-py`/`linkify-it-py`).
+- **Files:** `README.md`, `SETUP.md`, `GMAIL_SETUP.md`, `IMAP_SETUP.md`, `privacy.md`, screenshots,
+  tag + formula (tap repo).
 - **Depends:** WP-26, WP-28. **Parallel:** NO. **Size:** S/M.
 - **Acceptance:** docs/UI vocabulary identical (spot grep); goldens green; scope strings agree with
   code; formula installs the tagged version cleanly.
@@ -691,7 +907,11 @@ touch `state.js`/`main.js` trivially — later merges rebase; see orchestration 
 
 ### WP-31 · SQLite storage (OPTIONAL — maintainer decision gate)
 - **Goal:** ARC-2b end state: one `bcfeed.db`, WAL, transactional multi-table populate commits.
-- **Scope:** ARC-2b / ARCH-7 (schema per the architecture plan incl. `source` and
+  (ARCH-7's case strengthened at e363bf4: the merge added a **seventh** JSON store,
+  `provider_config.json`, and kept both duplicate persistence layers. Secrets stay in the
+  keychain — only non-secret provider config migrates.)
+- **Scope:** ARC-2b / ARCH-7 (schema per the architecture plan incl. `source`, the provider-tagged
+  ledger, and
   `fetch_failed/fetched_at`; startup import of schema-v2 JSON stores inside one transaction; JSON
   renamed `*.imported.bak`; store function signatures preserved; optional `--export-json`).
 - **Files:** `storage.py` (new), `session_store.py` (facade), `json_store.py` (import-only),
@@ -732,7 +952,9 @@ orchestrator (this is how same-file conflicts are prevented, not discovered).
 3. The improvement-spec sections for every ID in its WP scope (table at top of this file).
 4. The cited finding entries in `docs/current-state/known-issues.md` (evidence file:line anchors).
 5. UI-facing WPs (07, 18–26): `docs/improvements/ui-redesign.md` and
-   `docs/current-state/screenshots/` (read the PNGs — light AND dark pairs).
+   `docs/current-state/screenshots/` (read the PNGs — light AND dark pairs; shots numbered ≤19
+   predate the e363bf4 settings redesign — the `20-postmerge-*`/`22b-postmerge-*`/`23-postmerge-*`
+   series shows the current settings/provider surface).
 
 **Definition of done** is global rule 7. The orchestrator does not merge a WP whose PR lacks pasted
 verification output. After each phase completes, run the full suite + Playwright + a manual smoke of
@@ -755,13 +977,27 @@ the do-not-break list before opening the next phase.
 
 **Known plan-level conflicts already resolved (do not re-litigate):**
 - CQ-01 says delete `mark_dates_not_scraped`; LOG-3 resurrects it → WP-06 keeps it (comment pointer).
-- CQ-11's terminal error event vs ARC-1's typed protocol → WP-04 ships only the worker catch-all +
-  `ERROR:` line (client already routes it); WP-10 supersedes with `event: error`.
+- CQ-11's worker catch-all **landed upstream at e363bf4** (server.py:679-688) — WP-04 no longer
+  carries a worker half; WP-10 supersedes the `ERROR:` prose with a typed terminal `event: error`.
+- The email decode block was dead at 598a9dd and is **live at e363bf4**
+  (bandcamp_email_parser.py:23-27, feeds the empty-body guard) — CQ-01's original delete
+  instruction is rescinded; do not delete it.
+- **Lane A/B provider-file ownership (new):** WP-11 lands the relocated server.py IMAP plumbing in
+  `provider_factory.py` — NOT in `imap_client.py`/`imap_provider.py` — precisely so WP-16 ∥ WP-11
+  stays file-disjoint. If the helpers belong deeper in the IMAP layer, that follow-up move is free
+  after the lanes close (any WP-13+ window).
+- LOG-22 split: the **schema half** (provider-tagged ledger) is WP-14's; the **behavior half**
+  (provider switch → prompted re-check) is WP-15's. Decision (a) — single-provider-at-a-time with
+  prompted re-check — is the logic plan's pick; do not build per-provider ledgers (option b)
+  without a maintainer override.
 - LOG-5's embed-record shape vs LOG-20's contract → WP-11 writes the LOG-20 shape from day one;
   WP-14 only performs the one-shot key rewrite and drops stored `embed_url`.
 - UXP-10 auto-fetch: **rejected** (decision recorded in the UX plan); no WP implements it.
 - CQ-37 renames `unseen-day` → `populated-day` (WP-19); UIR-13's `has-unseen` is a **new** class
-  driven by the `hasUnseen` boolean (dashboard.js:1254-1259), not a rename of the same class (WP-20).
+  driven by the `hasUnseen` boolean (dashboard.js:1257-1262 at e363bf4), not a rename of the same
+  class (WP-20).
+- The settings/provider surface is normalized (UIR-30, WP-19/20), **never rebuilt** — its
+  structure is on the do-not-break list.
 - Investigated-not-issues list in known-issues.md is binding: do not "fix" release_cache rewrite
   cost, SSE keep-alive, per-toggle write cost, etc.
 
@@ -771,71 +1007,81 @@ the do-not-break list before opening the next phase.
 
 | ID | Risk | WPs | Likelihood / impact | Mitigation |
 |---|---|---|---|---|
-| R1 | **Scope/token migration forces re-auth**: WP-13 invalidates every existing token (readonly scope + JSON format). A user mid-backlog is bounced to Google; the unverified-app interstitial may strand them. | WP-13, WP-23 | Certain / medium | Ship 5d+5e together (exactly one re-auth event). Legacy detection routes into the existing missing-token flow, which WP-23 later upgrades. Release notes + banner copy ("bcfeed now asks for read-only access; please reconnect"). Manual end-to-end reconnect test before release. |
+| R1 | **Scope migration forces re-auth**: WP-13 invalidates every existing token (readonly scope). The storage migration half already happened upstream at e363bf4 (keychain), so the re-auth event is scope-only — but the legacy-pickle retirement (SEC-10) must ride the same release or a stale pickle can resurrect a full-scope token. A user mid-backlog is bounced to Google; the unverified-app interstitial may strand them. | WP-13, WP-23 | Certain / medium | Ship 5d + SEC-10 together (exactly one re-auth event). Legacy detection routes into the existing missing-token flow, which WP-23 later upgrades. Release notes + banner copy ("bcfeed now asks for read-only access; please reconnect"). Manual end-to-end reconnect test before release. |
 | R2 | **Cache-format migrations lose user state**: WP-14's canonical-URL rewrite merges keys across four stores; a bug loses stars/seen permanently (the only user-created data). WP-31 repeats the exposure. | WP-14, WP-31 | Medium / high | `.pre-v2` / `.imported.bak` backups before any rewrite (never delete). Round-trip pytest on fixture stores incl. collision cases. Manual upgrade rehearsal on a copy of the maintainer's real data dir before merging. Recovery documented: restore backup + re-check range (LOG-3). |
 | R3 | **CSS rewrite regressions, especially the light theme**: the current skin was dark-designed and light-broken; a rewrite can invert or repeat that. Playwright pixel-diffs will churn. | WP-19, WP-20, WP-25 | High / medium | WP-19 is 1:1 mechanical (dark screenshot-identical) so WP-20's diff is tokens/components only. WP-20 AC requires the audit's exact measured contrast pairs to pass **in both themes**, verified by script not eyeball. Smoke re-baselined once per WP, both themes captured. |
 | R4 | **Embed iframe behavior changes**: deriving `embed_url` instead of storing it (LOG-20), http(s) whitelisting of iframe src (CQ-21), and negative-cache TTLs could break playback or wrongly mark live releases unavailable. Bandcamp can also change its embed format at any time. | WP-11, WP-14, WP-07, WP-24 | Medium / medium | Keep `build_embed_url` derivation covered by a fixture test against a saved real page; manual playback check in WP-11/WP-14/WP-24 verification; negative-cache TTL (7 d) bounds any false "unavailable"; `Open on Bandcamp` fallback always present. |
-| R5 | **Packaging unknowns**: PyInstaller × google-api-python-client hidden imports, Gatekeeper/notarization friction, app translocation. A prior attempt already failed on asset paths. | WP-29 | High / low (CLI unaffected) | WP-28 fixes the actual prior failure (paths) independently. Time-box WP-29; the Homebrew CLI remains the primary channel and blocks nothing. Ad-hoc signing + honest right-click-open docs; notarization deferred. |
-| R6 | **server.py contention stalls Phase 1**: nearly every backend WP touches the hub file; a slow WP serializes the phase. | WP-10..WP-17 | Medium / low | Lanes A/B defined above; WP-11 shrinks the hub early; WP-16 absorbs slack in Lane B. Orchestrator watches lane length, not phase length. |
+| R5 | **Packaging unknowns**: PyInstaller × google-api-python-client hidden imports — joined at e363bf4 by `keyring`'s dynamic backend discovery — Gatekeeper/notarization friction, app translocation. A prior attempt already failed on asset paths. | WP-29 | High / low (CLI unaffected) | WP-28 fixes the actual prior failure (paths) independently. Time-box WP-29; the Homebrew CLI remains the primary channel and blocks nothing. Ad-hoc signing + honest right-click-open docs; notarization deferred. |
+| R6 | **server.py contention stalls Phase 1**: nearly every backend WP touches the hub file — now 822 lines at e363bf4 (grew ~120 lines of IMAP plumbing in the merge); a slow WP serializes the phase. | WP-10..WP-17 | Medium / low | Lanes A/B defined above with an explicit provider-file split; WP-11 shrinks the hub early (incl. the new IMAP block); WP-16 absorbs slack in Lane B. Orchestrator watches lane length, not phase length. |
 | R7 | **Parallel Phase-3 worktrees collide on shared modules** (`state.js`, `main.js`, `status.js`). | WP-23/24/25 | Medium / low | Fixed merge order (23→24→25) with rebase-before-merge; files-touched contract; shared-module edits kept additive (new functions, not signature changes) — anything structural goes through the orchestrator. |
 | R8 | **Settling window changes populate-button semantics**: after WP-15, recent days always re-check, so "Up to date" appears less often and Gmail is re-queried (≤3 days) on every run. Could read as a bug and slightly raises API usage. | WP-15, WP-24 | Medium / low | Bounded cost by design (N=3). WP-24's copy explains "recent days are re-checked". Quota interaction covered by WP-16's early-stop. |
 | R9 | **Typed-SSE migration window**: between WP-10 (server) and WP-26 (deletes the `text` mirror), both fields exist; a partial merge could leave the client reading a deleted field. | WP-10, WP-22, WP-26 | Low / medium | Server+client halves of WP-10 ship in one PR; `text` removal happens only in WP-26 after all consumers use `message`; grep AC enforces. |
-| R10 | **Golden-test churn**: WP-09 (docs), WP-06 (renderer fix), WP-26 (copy) each legitimately change goldens; careless regeneration could mask a real renderer regression. | WP-03b, WP-06, WP-26, WP-30 | Medium / low | Goldens regenerate only in WPs that state it in scope, with the diff reviewed line-by-line in the PR; renderer *unit* cases (link, autolink, scheme filter) never regenerate. |
+| R10 | **Golden-test churn**: WP-09 (docs) and WP-26 (copy) each legitimately change goldens; careless regeneration could mask a config regression. (The renderer itself is markdown-it-py since e363bf4 — goldens guard *our* link-map/html:true config, not a hand-rolled parser.) | WP-03b, WP-26, WP-30 | Medium / low | Goldens regenerate only in WPs that state it in scope, with the diff reviewed line-by-line in the PR; the internal-link-rewrite and `javascript:`-rejection unit cases never regenerate. |
+| R11 | **Provider-parity drift**: every parse/transport fix now has two homes (Gmail + IMAP, CQ-71); a fix landing Gmail-only leaves the defect class alive on the other path (and vice versa — e.g. the correct IMAP decode must not be "fixed" to match Gmail's quopri hack). | WP-04, WP-16, WP-15 | Medium / medium | WP-03a fixtures run through both providers' extraction; WP-04/WP-16 ACs assert both paths explicitly; CQ-71 is a standing review item on every provider-touching PR — reviewers reject Gmail-only fixes without a documented IMAP-N/A. |
 
 ---
 
 ## Appendix A — Traceability (finding/item → owning WP)
 
 Primary owner listed first; secondary WPs finish or consume the item. The orchestrator checks this
-table off as WPs merge.
+table off as WPs merge. **UP** = resolved upstream by the e363bf4 merge (kept in known-issues.md's
+"Fixed upstream" section); the WP shown after UP owns the regression test or the residual. New
+e363bf4 finding IDs (PY-16..18, SEC-10..11, UI-19, CQ-70..72, LOG-22..24, UIR-30) are integrated.
 
 | Item | WP | Item | WP | Item | WP |
 |---|---|---|---|---|---|
 | PY-1 | 04 | JS-1 | 07 | UI-1..4 | 20 |
-| PY-2 | 04→10 | JS-2 | 07→22 | UI-5 | 19→25 |
-| PY-3 | 04 | JS-3 | 18 | UI-6 | 20→24 |
+| PY-2 | 10 (worker half UP) | JS-2 | 07→22 | UI-5 | 19→25 |
+| PY-3 | **UP** (fixtures 03a+04) | JS-3 | 18 | UI-6 | 20→24 |
 | PY-4 | 02+03 | JS-4 | 07→25 | UI-7, UI-8 | 20 |
-| PY-5 | 04 | JS-5 | 25 | UI-9 | 20→22 |
-| PY-6 | 06 | JS-6 | 07+11 | UI-10, UI-11 | 20 |
+| PY-5 | **UP** producer (sweep 14) | JS-5 | 25 | UI-9 | 20→22 |
+| PY-6 | **UP** (goldens 03b) | JS-6 | 07+11 | UI-10, UI-11 | 20 |
 | PY-7 | 04 | JS-7 | 21 | UI-12 | 20+21 |
 | PY-8 | 05 | JS-8 | 07 | UI-13 | 20→24 |
 | PY-9 | 06(msg)+16 | JS-9 | 07 | UI-14..18 | 20 |
-| PY-10 | 11 | JS-10 | 10 | UX-1 | 23 |
-| PY-11 | 04 | JS-11 | 17+18 | UX-2 | 13→23 |
-| PY-12 | 05 | JS-12 | 18 | UX-3 | 22 |
-| PY-13 | 06 | JS-13 | 18→20 | UX-4 | 23 |
-| PY-14 | 06 | JS-14 | 07 | UX-5 | 25 |
-| PY-15 | 05 | JS-15 | 18 | UX-6 | 26 |
-| SEC-1 | 02 | ARCH-1 | 05 | UX-7 | 22 |
-| SEC-2 | 12 | ARCH-2 | 04 | UX-8 | 25 |
-| SEC-3 | 13 | ARCH-3 | 04→10 | UX-9 | 10→22 |
-| SEC-4 | 08 | ARCH-4 | 10 | UX-10 | 25 |
-| SEC-5 | 13 | ARCH-5 | 18 | UX-11 | 17→24 |
-| SEC-6 | 13 | ARCH-6 | 17+18 | UX-12 | 15→24 |
-| SEC-7 | 07 | ARCH-7 | 31 (opt) | UX-13 | 25 |
-| SEC-8 | 06 | ARCH-8 | 11+13 | UX-14 | 25 |
-| SEC-9 | 08 | ARCH-9 | 09+28 | UX-15 | 07→22 |
-| PERF-1 | 17+18 | ARCH-10 | 02+03 | UX-16 | 07→23 |
-| PERF-2 | 11+07 | ARCH-11 | 18→20 | UX-17 | 25 |
-| PERF-3 | 12+17 | LOG-1 | 04 | UX-18 | 20+23 |
-| PERF-4 | 18→27 | LOG-2, LOG-3 | 15 | UXP-1 | 26 |
-| PERF-5 | 14+10 | LOG-4 | 05 | UXP-2 | 22 |
-| PERF-6 | 05 | LOG-5 | 11 | UXP-3 | 23 |
-| PERF-7 | 16 | LOG-6 | 17 | UXP-4 | 13+23 |
-| PERF-8 | 07 | LOG-7 | 12 | UXP-5..7 | 23 |
-| CQ-01,02 | 06 | LOG-8 | 04 | UXP-8, 9 | 24 |
-| CQ-03,04 | 06 | LOG-9 | 14 | UXP-10 | 24 (record) |
-| CQ-05..07 | 07 | LOG-10 | 04+14 | UXP-11 | 15+24 |
-| CQ-08 | 06 | LOG-11 | 14 | UXP-12 | 25+30 |
-| CQ-10..14,16 | 04 | LOG-12 | 15 | UXP-13 | 10+22 |
-| CQ-15 | 06 | LOG-13 | 05 | UXP-14..18 | 25 |
-| CQ-17,18,30 | 05 | LOG-14..17 | 16 | UXP-19, 20 | 22 |
-| CQ-19 | 16 | LOG-18 | 04 | UXP-21 | 24 |
-| CQ-20,31 | 11 | LOG-19 | 06+12+14 | UIR-* | 20 (19, 21–25 consume) |
-| CQ-21 | 07 | LOG-20 | 14 (shape in 11) | ARC-1 | 10 |
-| CQ-22 | 07→22 | LOG-21 | 14 | ARC-2a / 2b | 04+05 / 31 |
-| CQ-23 | 18 | CQ-40..47 | 02+03 | ARC-3 | 11+13 |
-| CQ-24 | 10 | CQ-50,51 | 01 | ARC-4 | 18 |
-| CQ-25 | 07+11 | CQ-60..63 | 09 | ARC-5a..f | 02/08/08/13/13/12 |
-| CQ-26,27 | 07 | CQ-64 | 09+28 | ARC-6 | 28+29 |
-| CQ-32..37 | 06/18/18/19/18/19 | CQ-65 | 13+30 | ARC-7a..d | 02+03 |
+| PY-10 | 11 | JS-10 | 10 | UI-19 | 20 (19 preps) |
+| PY-11 | 04 | JS-11 | 17+18 | UX-1 | 23 |
+| PY-12 | 05 | JS-12 | 18 | UX-2 | 13→23 |
+| PY-13 | 06 | JS-13 | 18→20 | UX-3 | 22 |
+| PY-14 | 06 | JS-14 | 07 | UX-4 | 23 |
+| PY-15 | 05 | JS-15 | 18 | UX-5 | 25 |
+| PY-16 | 14(schema)+15(behavior) | ARCH-1 | 05 | UX-6 | 26 |
+| PY-17 | 16 (+15 re-check) | ARCH-2 | 04 | UX-7 | 22 |
+| PY-18 | 04 | ARCH-3 | 10 (worker half UP) | UX-8 | 25 |
+| SEC-1 | 02 | ARCH-4 | 10 | UX-9 | 10→22 |
+| SEC-2 | 12 | ARCH-5 | 18 (+14 `source`) | UX-10 | 25 |
+| SEC-3 | 13 | ARCH-6 | 17+18 | UX-11 | 17→24 |
+| SEC-4 | 08 | ARCH-7 | 31 (opt) | UX-12 | 15→24 |
+| SEC-5 | **UP** (residual 13) | ARCH-8 | 11+13 | UX-13 | 25 |
+| SEC-6 | 13 | ARCH-9 | 09+28 | UX-14 | 25 |
+| SEC-7 | 07 | ARCH-10 | 02+03 | UX-15 | 07→22 |
+| SEC-8 | **UP** (golden case 03b) | ARCH-11 | 18→20 | UX-16 | 07→23 |
+| SEC-9 | 08 | LOG-1 | 04 | UX-17 | 25 |
+| SEC-10 | 13 | LOG-2, LOG-3 | 15 | UX-18 | 20+23 |
+| SEC-11 | 08 (+02 bind) | LOG-4 | 05 | UXP-1 | 26 |
+| PERF-1 | 17+18 | LOG-5 | 11 | UXP-2 | 22 |
+| PERF-2 | 11+07 | LOG-6 | 17 | UXP-3 | 23 |
+| PERF-3 | 12+17 | LOG-7 | 12 | UXP-4 | 13+23 |
+| PERF-4 | 18→27 | LOG-8 | **UP** producer (sweep 14) | UXP-5 | 23 (residual; core UP) |
+| PERF-5 | 14+10 | LOG-9 | 14 | UXP-6, 7 | 23 |
+| PERF-6 | 05 | LOG-10 | 04+14 | UXP-8, 9 | 24 |
+| PERF-7 | 16 | LOG-11 | 14 | UXP-10 | 24 (record) |
+| PERF-8 | 07 | LOG-12 | 15 | UXP-11 | 15+24 |
+| CQ-01,02 | 06 | LOG-13 | 05 | UXP-12 | 25+30 |
+| CQ-03,04 | 06 | LOG-14..17 | 16 | UXP-13 | 10+22 |
+| CQ-05..07 | 07 | LOG-18 | **UP** core (residuals 04) | UXP-14..18 | 25 |
+| CQ-08 | **UP** (residual 13) | LOG-19 | 06+12+14 | UXP-19, 20 | 22 |
+| CQ-10,14,16 | 04 | LOG-20 | 14 (shape in 11) | UXP-21 | 24 |
+| CQ-11 | 10 (worker half UP) | LOG-21 | 14 | UIR-* | 20 (19, 21–25 consume) |
+| CQ-12,13 | **UP** (fixtures 03a+04) | LOG-22 | 14+15 | UIR-30 | 20 (19 preps) |
+| CQ-15 | **UP** | LOG-23 | 16 (+15) | ARC-1 | 10 |
+| CQ-17,18,30 | 05 | LOG-24 | 04 | ARC-2a / 2b | 04+05 / 31 |
+| CQ-19 | 16 | CQ-40..47 | 02+03 | ARC-3 | 11+13 |
+| CQ-20 | 11 | CQ-50,51 | 01 | ARC-4 | 18 |
+| CQ-21 | 07 | CQ-60..63 | 09 | ARC-5a,b,c | 02/08/08 |
+| CQ-22 | 07→22 | CQ-64 | 09+28 | ARC-5d | 13 |
+| CQ-23 | 18 | CQ-65 | 13+30 | ARC-5e | **UP** (residual 13) |
+| CQ-24 | 10 | CQ-70 | 13 | ARC-5f | 12 |
+| CQ-25 | 07+11 | CQ-71 | 04+16 (discipline; R11) | ARC-6 | 28+29 |
+| CQ-26,27 | 07 | CQ-72 | 13 | ARC-7a..d | 02+03 |
+| CQ-31 | 11 (optional, demoted) | CQ-32..37 | 06/18/18/19/18/19 | | |

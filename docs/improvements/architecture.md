@@ -1,6 +1,7 @@
 # bcfeed — Architecture Improvement Plan
 
 Status: proposal (no code changes yet). Date: 2026-07-05.
+Baseline: **e363bf4** (revalidated 2026-07-05 after the IMAP-provider merge). The original audit findings cite `598a9dd`; all line references below have been updated to `e363bf4`. The merge landed: an email-provider abstraction (`email_provider.py`, `provider_factory.py`, `gmail_provider.py`, `imap_provider.py`, `imap_client.py`), `gmail.py` split into `gmail_client.py`, keychain-backed credential storage (`credential_store.py`, `keyring`), a markdown-it-py doc renderer, a redesigned settings UI, and an empty-email-body crash fix. Items affected are marked inline; **ARC-5e is resolved upstream**.
 Sources: `docs/audit` process + verified findings in the audit report (IDs `ARCH-n`, `SEC-n`, `PY-n`, `JS-n`, `PERF-n` referenced below), backend/frontend deep-read maps.
 
 Guiding constraint: bcfeed is a single-user, local-first utility. Every item below must reduce total code or total risk; nothing introduces servers, frameworks, background daemons, or operational machinery. Where a choice exists between "correct and boring" and "capable and clever", pick boring.
@@ -13,10 +14,10 @@ Guiding constraint: bcfeed is a single-user, local-first utility. Every item bel
 
 ## ARC-1 — Structured populate-progress protocol (typed JSON SSE events)
 
-**Size: M** | Depends on: nothing | Enables: real progress UI, honest failure reporting, future IMAP source
+**Size: M** | Depends on: nothing | Enables: real progress UI, honest failure reporting, per-provider progress (IMAP has landed)
 
 ### Problem
-The populate stream emits unstructured prose lines (`server.py:616-617`); the client parses meaning out of English — `"Maximum results"` substring triggers a modal, `"ERROR:"` prefix routes to the error handler (`dashboard.js:1465-1478`). Any wording change silently breaks UI behavior (ARCH-4). Worse, uncaught worker exceptions end the stream with `event: done`, so failure renders as success (ARCH-3, PY-2). The backend already computes everything a determinate progress bar needs: missing ranges up front (`pipeline.py:70`), message counts (`pipeline.py:104`), batch index (batch loop in `gmail.py`, batch_size 20 at `server.py:597`).
+The populate stream emits unstructured prose lines (`server.py:700-701`); the client parses meaning out of English — `"Maximum results"` substring triggers a modal, `"ERROR:"` prefix routes to the error handler (`dashboard.js:1468-1481`). Any wording change silently breaks UI behavior (ARCH-4). The merge *partially* mitigated ARCH-3/PY-2: the worker now wraps its body and enqueues `"ERROR: …"` prose per exception class (`server.py:681-690`), so crashes are no longer silent — but the stream still terminates with `event: done` in every case (`server.py:702`), so the terminal signal still says success on failure and the client still substring-sniffs. The backend already computes everything a determinate progress bar needs: missing ranges up front (`pipeline.py:100-101`), message counts (`pipeline.py:152`), batch index (batch loop in `gmail_client.get_messages` / `imap_client`, batch_size 20 at `server.py:677`).
 
 ### Design
 Keep SSE, keep the single stream. Every `data:` payload becomes one JSON object:
@@ -27,7 +28,7 @@ Keep SSE, keep the single stream. Every `data:` payload becomes one JSON object:
  "text": "Checking mail for 3–9 June…"}
 ```
 
-- `phase`: `"search" | "download" | "parse" | "save"` (fixed enum; a future IMAP source adds phases, not vocabulary).
+- `phase`: `"search" | "download" | "parse" | "save"` (fixed enum, provider-agnostic — both Gmail and the now-shipped IMAP provider emit the same phases through the `EmailProvider` interface; a provider adds phases, not vocabulary).
 - `current`/`total`: nullable ints. `total` known per phase (ranges for search, message count for download). Absent → indeterminate spinner, not a guess.
 - `message`: plain-language human-readable line (the UX plan owns the copy; the protocol just carries it).
 - `level`: `"info" | "warn" | "error"`.
@@ -36,7 +37,7 @@ Keep SSE, keep the single stream. Every `data:` payload becomes one JSON object:
 Terminal events become named SSE events with JSON payloads:
 
 - `event: done` → `{"new_releases": N, "days_scraped": M}` — lets the UI say "N new releases" and refetch `/releases` instead of `window.location.reload()`.
-- `event: error` → `{"code": "auth" | "max_results" | "gmail" | "parse" | "internal", "message": "..."}` — emitted for **every** worker exception: wrap the worker body in `except Exception as exc: q.put(("error", code, str(exc)))`. This closes the failure-looks-like-success path permanently.
+- `event: error` → `{"code": "auth" | "max_results" | "provider" | "parse" | "internal", "message": "..."}` — emitted for **every** worker exception. The worker's per-exception `except` ladder already exists (`server.py:681-690`, covering `GmailAuthError`, `MaxResultsExceeded`, and the provider layer's `AuthenticationError`/`ProviderError`); the remaining change is to carry a typed terminal event through the queue instead of an `"ERROR: …"` prose line, and to stop yielding `event: done` after a failure (`server.py:702`). This closes the failure-looks-like-success path permanently.
 
 Implementation shape: change the `log=queue.put` callback into a tiny emitter object (`emit.log(msg)`, `emit.progress(phase, cur, tot)`, `emit.error(code, msg)`) passed into `populate_release_cache`; the SSE generator `json.dumps`es whatever it drains. ~50 lines server-side, ~40 client-side (audit estimate).
 
@@ -46,7 +47,7 @@ A protocol between two halves of the same app should carry structure, not prose,
 ### Risk / compat
 - Low. Both halves ship together; there is no external consumer of this stream. The `text` mirror is belt-and-braces, not a real compat need.
 - The `max_results` modal and error alert flows must be re-pointed at `code` fields in the same change, or they go dead — grep for `"Maximum results"` and `"ERROR:"` in `dashboard.js` as the completeness check.
-- Do **not** fix the lock-release-on-disconnect bug (`server.py:619-620`) as part of this item's scope creep — but note it must move to the worker's `finally` when this file is touched (ARCH-1).
+- Do **not** fix the lock-release-on-disconnect bug (`server.py:703-704` — `POPULATE_LOCK` is still released in the SSE generator's `finally`, not the worker's) as part of this item's scope creep — but note it must move to the worker's `finally` when this file is touched (ARCH-1).
 
 ### Acceptance criteria
 1. No substring matching on SSE payloads anywhere in `dashboard.js`.
@@ -61,7 +62,7 @@ A protocol between two halves of the same app should carry structure, not prose,
 
 ### Evaluation
 
-**Stay on JSON (fixed)?** Virtues: files are human-inspectable (a real local-first value), zero migration, `clear cache` = delete files. Fixed cost: needs one shared lock, one store module (persistence is currently implemented twice — `server.py:155-228` vs `session_store.py:30-83`, which is how the same tmp-path bug got written twice), unique tmp names, and per-range persistence ordering. Remaining ceiling even after fixes: every mutation rewrites a whole file (PERF-6), every `/releases` re-reads and re-flattens everything, multi-file updates (release cache + empty dates + scrape status, `session_store.py:209-212`) stay non-transactional, and corruption recovery stays manual.
+**Stay on JSON (fixed)?** Virtues: files are human-inspectable (a real local-first value), zero migration, `clear cache` = delete files. Fixed cost: needs one shared lock, one store module (persistence is currently implemented twice — `server.py:94-166` vs `session_store.py:30-83`, which is how the same tmp-path bug got written twice; the merge also added a sixth JSON store, `provider_config.json`, with its own atomic-write code in `provider_factory.py:58-66` — a third persistence idiom), unique tmp names, and per-range persistence ordering. Remaining ceiling even after fixes: every mutation rewrites a whole file (PERF-6), every `/releases` re-reads and re-flattens everything, multi-file updates (release cache + empty dates + scrape status, `session_store.py:209-212`) stay non-transactional, and corruption recovery stays manual.
 
 **SQLite (stdlib, one file, WAL)?** Deletes ~150 lines of bespoke persistence, makes the three-store populate commit a single transaction (structurally fixing the ARCH-2 scraped-before-persisted class), gives indexed range queries, and fixes the whole lost-update family (ARCH-1, PERF-1, PERF-6) at the storage layer. Costs: one-time migration, and loss of open-in-editor debuggability (mitigated: `sqlite3 bcfeed.db .dump`, plus an optional `--export-json` flag).
 
@@ -71,9 +72,9 @@ A protocol between two halves of the same app should carry structure, not prose,
 
 **Size: S** | Depends on: ARC-7a (to test it) | Fixes: ARCH-1, ARCH-2, PY-8, PY-12 (partially)
 
-- One `threading.Lock` in `session_store` wrapping every load-modify-save; all persistence helpers in `server.py` (`_load_set`, `_save_set`, `_load_embed_cache`, `_save_embed_cache`) deleted and re-pointed at `session_store`.
-- Unique tmp names (`tempfile.NamedTemporaryFile(dir=store_dir, delete=False)` + `os.replace`) — kills the shared-`.tmp`-path collision and its non-atomic fallback (`server.py:169-173`).
-- Reorder the pipeline: `persist_release_metadata(range_releases)` **then** `mark_date_range_scraped(...)`, per range, inside the loop (~5-line reorder of `pipeline.py:110-123`). A crash can now only lose the in-flight range, and that range stays marked un-scraped so retry re-fetches it.
+- One `threading.Lock` in `session_store` wrapping every load-modify-save; all persistence helpers in `server.py` (`_load_set`, `_save_set`, `_load_embed_cache`, `_save_embed_cache`, now at `server.py:94-166`) deleted and re-pointed at `session_store`; fold `provider_factory`'s config read/write (`provider_factory.py:26-66`) into the same store module.
+- Unique tmp names (`tempfile.NamedTemporaryFile(dir=store_dir, delete=False)` + `os.replace`) — kills the shared-`.tmp`-path collision and its non-atomic fallback (`server.py:141-143`).
+- Reorder the pipeline: `persist_release_metadata(range_releases)` **then** `mark_date_range_scraped(...)`, per range, inside the loop. **Still needed at e363bf4:** the rewritten pipeline marks each range scraped inside the loop (`pipeline.py:162`) but persists releases only once at the end (`pipeline.py:183`) — a crash between them still loses every fetched range's releases while leaving the dates marked scraped. A crash can, after the reorder, only lose the in-flight range, and that range stays marked un-scraped so retry re-fetches it.
 - Corrupted store files: rename to `<name>.corrupt-<ts>.json` and surface a log/`event: error` instead of silently treating as empty and overwriting (`session_store.py:39-42`).
 
 **Acceptance criteria:** (1) a pytest that fires 50 concurrent viewed-state POSTs at a threaded test client loses zero marks; (2) a pytest that raises inside `construct_release_list` mid-run leaves the failed range absent from `scrape_status.json` and prior ranges' releases present in `release_cache.json`; (3) a hand-corrupted `release_cache.json` is preserved under a `.corrupt-*` name, never overwritten.
@@ -95,9 +96,9 @@ CREATE TABLE embed_meta (url TEXT PRIMARY KEY, release_id TEXT, is_track INTEGER
                          embed_url TEXT, description TEXT, fetched_at TEXT, fetch_failed INTEGER DEFAULT 0);
 ```
 
-Notes: `source` column added now so IMAP later needs no migration (ARCH-5's advice); `fetch_failed`/`fetched_at` on `embed_meta` give the negative-cache PERF-2 needs; `flags` unifies viewed/starred and makes the `/reset-caches` both-flags bug (PY-13) structurally impossible to reintroduce.
+Notes: `source` column is now immediately useful — the IMAP provider shipped in e363bf4, and releases currently carry no record of which provider fetched them; `fetch_failed`/`fetched_at` on `embed_meta` give the negative-cache PERF-2 needs; `flags` unifies viewed/starred and makes the `/reset-caches` both-flags bug (PY-13) structurally impossible to reintroduce.
 
-Migration: on startup, if `bcfeed.db` is absent and JSON stores exist → import all five stores inside one transaction → rename JSON files to `*.imported.bak` (never delete). Keep the existing `session_store` function signatures (`get_full_release_cache`, `persist_release_metadata`, `cached_releases_for_range`, viewed/starred get/set) so `server.py`/`pipeline.py` barely change. Populate persists one range = one transaction across `releases` + `day_status`.
+Migration: on startup, if `bcfeed.db` is absent and JSON stores exist → import all five data stores inside one transaction (`provider_config.json` is *settings*, not data — it stays a JSON file; its secrets already live in the keychain) → rename JSON files to `*.imported.bak` (never delete). Keep the existing `session_store` function signatures (`get_full_release_cache`, `persist_release_metadata`, `cached_releases_for_range`, viewed/starred get/set) so `server.py`/`pipeline.py` barely change. Populate persists one range = one transaction across `releases` + `day_status`.
 
 **Risk / compat:** migration bugs could lose stars/viewed — mitigated by the `.bak` rename and a round-trip test (JSON fixtures → import → export → compare). `Clear cache` UX changes from "delete files" to targeted `DELETE FROM` statements — simpler and finally makes the flag semantics exact. If the maintainer vetoes SQLite on inspectability grounds, ARC-2a alone is an acceptable permanent state; document the accepted ceiling (whole-file rewrites, non-transactional multi-store updates are gone either way only under 2b).
 
@@ -107,34 +108,36 @@ Migration: on startup, if `bcfeed.db` is absent and JSON stores exist → import
 
 ## ARC-3 — Backend layering: get non-HTTP concerns out of server.py
 
-**Size: M** | Depends on: ARC-2a (store consolidation overlaps) | Fixes: ARCH-8, PY-6 (testability of), PERF-2 (cache-first embed), SEC-6 (blocking OAuth, structural half)
+**Size: M** | Depends on: ARC-2a (store consolidation overlaps) | Fixes: ARCH-8, PERF-2 (cache-first embed), SEC-6 (blocking OAuth, structural half)
 
-### Problem
-`server.py` (626 lines) contains four non-HTTP concerns: a 65-line hand-rolled markdown renderer (`server.py:61-145`), inline Bandcamp fetching in `/embed-meta` (`server.py:419-423`) that never reads its own cache, a duplicate persistence layer (`server.py:155-228`), and a synchronous interactive OAuth flow inside a request handler (`server.py:545` → `flow.run_local_server`, no timeout). This coupling directly blocks the cheapest wins: a cache-first `/embed-meta`, golden-testable markdown, one store.
+**Re-scoped at e363bf4.** The merge moved this item in both directions. Resolved upstream: the hand-rolled markdown renderer is gone — docs render via markdown-it-py (`server.py:70-84`) into a proper template (`templates/docs.html`), which also fixes PY-6's link mangling. Landed upstream in exactly the shape this plan wanted: a provider abstraction (`email_provider.py` interface; `gmail_provider.py`/`imap_provider.py` implementations; `gmail_client.py`/`imap_client.py` transports; `provider_factory.py` selection) — email parsing extracted to `bandcamp_email_parser.py`. Regressed: `server.py` grew from 626 to **822 lines** and gained a *new* non-HTTP concern — ~120 lines of IMAP/provider plumbing (`_coerce_imap_port`, `_build_imap_config`, `_open_imap_client`, `_imap_folder_rank`, `_discover_imap_folders`, `server.py:278-395`) that belongs in the provider layer.
+
+### Problem (as of e363bf4)
+`server.py` (822 lines) still contains four non-HTTP concerns: inline Bandcamp fetching in `/embed-meta` (`server.py:487-494`) that writes its cache but never reads it, a duplicate persistence layer (`server.py:94-166`), a synchronous interactive OAuth flow inside a request handler (`/load-credentials` at `server.py:609` → `gmail_authenticate()` → `flow.run_local_server` at `gmail_client.py:235`, no timeout), and the new IMAP plumbing block (`server.py:278-395`). This coupling directly blocks the cheapest wins: a cache-first `/embed-meta`, non-blocking auth, one store.
 
 ### Design — target module boundaries
 
 | Module | Owns | Must not |
 |---|---|---|
-| `server.py` (~300 lines) | routes, request parsing, JSON serialization, SSE plumbing | touch files directly, call `requests`, render markdown |
-| `docs.py` (new) | `render_markdown_html`, `format_setup_inline`, doc-path → HTML | know about Flask |
+| `server.py` (~350 lines) | routes, request parsing, JSON serialization, SSE plumbing | touch files directly, call `requests`, open IMAP connections |
 | `bandcamp.py` (grown) | `get_embed_meta(url)` = cache lookup → validated fetch → parse → cache write (single home for fetch+parse+cache; consumes the ARC-5f validator) | be called with unvalidated URLs |
-| `session_store.py` / `storage.py` | **all** persistence (ARC-2) | — |
-| `gmail.py` | auth + search + download + email parsing (unchanged scope) | be invoked synchronously from a request thread for interactive auth |
+| `session_store.py` / `storage.py` | **all** persistence (ARC-2), including provider-config read/write | — |
+| `email_provider.py` + providers (exists) | provider interface, search/fetch, auth | be invoked synchronously from a request thread for interactive auth |
+| `provider_factory.py` (grown) | provider selection **plus** the IMAP config-building/folder-discovery helpers currently in `server.py:278-395` | know about Flask |
 
-`/load-credentials` change: validate the upload is a plausible OAuth client-secret JSON (has `installed.client_id` etc.), save atomically, delete stale token, **return immediately**. Interactive auth runs on demand at next populate (which already handles `GmailAuthError`) or via an explicit "Connect Gmail" trigger — exact flow is the UX plan's call; the architectural requirement is only *no interactive OAuth inside a request handler*.
+Markdown rendering is now a ~15-line markdown-it-py configuration (`server.py:70-84`); it may stay in `server.py` or move with the doc routes — no longer a layering driver.
 
-The hand-rolled markdown renderer stays hand-rolled (no-deps ethos) but gets golden tests (ARC-7b) — it demonstrably mangles `[label](https://…)` links today (PY-6), which a golden of `SETUP.md` catches on every future edit.
+`/load-credentials` change: validate the upload is a plausible OAuth client-secret JSON (has `installed.client_id` etc.), save to the keychain (already done — `save_gmail_client_config_json`, `server.py:606`), clear the stale token, **return immediately** — today it still runs the full interactive `gmail_authenticate()` on the request thread (`server.py:609`). Interactive auth runs on demand at next populate (which already handles `GmailAuthError`) or via an explicit "Connect Gmail" trigger — exact flow is the UX plan's call; the architectural requirement is only *no interactive OAuth inside a request handler*. (The IMAP path has no such problem — `/imap/discover` and `/provider-config` validate credentials with a bounded network call, which is the right shape.)
 
 ### Rationale
-Layering in a 1,600-line codebase is not about purity; it is about giving each fragile heuristic (markdown, Bandcamp DOM, email copy) a home that a test can import without standing up Flask, and making the route file small enough that security review of the HTTP surface is a single-file read.
+Layering in a now ~3,000-line backend is not about purity; it is about giving each fragile heuristic (Bandcamp DOM, email copy in `bandcamp_email_parser.py`, IMAP folder ranking) a home that a test can import without standing up Flask, and making the route file small enough that security review of the HTTP surface is a single-file read.
 
 ### Risk / compat
 Low — mechanical moves with unchanged behavior, except the `/load-credentials` response shape (frontend updated in the same change; both ship together). The embed cache-first change alters observable behavior only by *removing* redundant network fetches.
 
 ### Acceptance criteria
-1. `grep -n "requests\.\|BeautifulSoup\|json.dump\|open(" server.py` → no hits outside app bootstrap.
-2. `docs.py` and `bandcamp.get_embed_meta` importable and testable without a Flask app or network (fetch injected/mockable).
+1. `grep -n "requests\.\|BeautifulSoup\|json.dump\|open(\|ImapClient(" server.py` → no hits outside app bootstrap.
+2. `bandcamp.get_embed_meta` and the IMAP discovery helpers importable and testable without a Flask app or network (fetch/connection injected/mockable).
 3. Two `/embed-meta` calls for the same URL hit the network once (second is a cache read) — regression test.
 4. `/load-credentials` returns in < 1 s regardless of OAuth state; no request thread ever blocks on human interaction.
 
@@ -145,7 +148,7 @@ Low — mechanical moves with unchanged behavior, except the `/load-credentials`
 **Size: L** | Depends on: ARC-1 (protocol first, so the populate module is written once), ARC-7c (Playwright smoke as the safety net) | Fixes: ARCH-5, JS-3 (single ownership), PERF-1/ARCH-6 (render coalescing), JS-6 (in-flight dedupe home)
 
 ### Problem
-1,725 lines in one IIFE with shared mutable state: the Populate button has two owners (`dashboard.js:575-579` vs `1460`), endpoints are derived twice with a stale `apiHost` left over (`9-21` vs `48-55`), cached-badge logic exists twice, and every feature edit lands in the same file. Full re-render is per-*toggle* today: `setViewed` rebuilds the calendar every call; mark-all-seen = N calendar rebuilds + N racing POSTs (PERF-1).
+**2,113 lines** (grown from 1,725 at audit time) in one IIFE with shared mutable state: the merge appended a 392-line provider/IMAP settings controller (`dashboard.js:1702-2093`) *inside the same IIFE*, proving the feature-cost point — a new source became 392 lines in the shared file, not a module. The Populate button has two owners (`dashboard.js:578-582` vs `1463`), endpoints are derived twice with a stale `apiHost` left over (`9-21` vs `48-55`), cached-badge logic exists twice (`759-772` vs `231-232`), and every feature edit lands in the same file. Full re-render is per-*toggle* today: `setViewed` rebuilds the calendar every call; mark-all-seen = N calendar rebuilds + N racing POSTs (PERF-1).
 
 ### Design
 
@@ -161,22 +164,24 @@ web/js/
   status.js     progress bar / log / header counts (single owner of populate-button state)
   modals.js     dialog helpers (focus trap/Escape once, reused)
   populate.js   SSE client for the ARC-1 protocol; preload loop
+  settings.js   settings panel + provider config (the 392-line provider/IMAP
+                controller at dashboard.js:1702-2093 moves here nearly verbatim)
   main.js       init order only
 ```
 
-Serving: add one Flask static route for `web/js/` (via `send_from_directory` with `safe_join`, or Flask's `static_folder`) — the current one-route-per-file pattern (`server.py:353-371`) does not scale to nine files. `paths.py` gains the directory constant (see ARC-6 resource-path note).
+Serving: add one Flask static route for `web/js/` (via `send_from_directory` with `safe_join`, or Flask's `static_folder`) — the current one-route-per-file pattern (`server.py:414-431`) does not scale to ten files. `paths.py` gains the directory constant (see ARC-6 resource-path note).
 
 **Rendering strategy — incremental where it pays, wholesale where it's cheap:**
 - Structural changes (sort, filter, data refetch): keep full rebuild, but build into a `DocumentFragment` and swap once.
 - Row-state changes (seen/star toggle): mutate the existing row's classes in place; **no** tbody rebuild, **no** calendar rebuild per toggle.
 - All renders go through `scheduleRender(regions)` which coalesces via `queueMicrotask`/`requestAnimationFrame`: N state mutations in one task → one render. Mark-all-seen becomes: mutate state N times → one batched POST (`{urls: [...], read: true}` — new endpoint, pairs with ARC-2) → one table render + one calendar render.
-- Calendar: precompute a `day → unseen-count` map once per render instead of the per-cell O(releases) scan (`dashboard.js:1254-1272`).
+- Calendar: precompute a `day → unseen-count` map once per render instead of the per-cell O(releases) scan (`dashboard.js:1257-1275`).
 
 **Event-listener hygiene:** one delegated `click`/`keydown` listener on `tbody` (replacing ~8 listeners × N rows per render), one document-level keydown for shortcuts, `AbortController`-scoped listeners for modals. Delegation also removes the listener-rebind cost that makes full re-render expensive today.
 
 **Single-owner rule:** each DOM region has exactly one module that writes it. The populate button and status area belong to `status.js`; `calendar.js` requests updates through state mutation, never writes the log (kills JS-3).
 
-This is a *mechanical* split — behavior-preserving, verified by the Playwright smoke before/after. It is the prerequisite for IMAP/multi-source (a second source becomes a new module + a `source` field, not edits across one shared file).
+This is a *mechanical* split — behavior-preserving, verified by the Playwright smoke before/after. The IMAP merge is the counterfactual that motivates it: the second source landed as 392 lines appended to the shared IIFE rather than a module, exactly the failure mode the split prevents for the *next* feature.
 
 ### Rationale
 The monolith is at a feature-cost breaking point, not a performance one. Native ES modules give the decomposition without paying the local-first tax of a build step: the files served are the files edited, view-source stays honest, and there is no toolchain to rot.
@@ -200,33 +205,33 @@ The monolith is at a feature-cost breaking point, not a performance one. Native 
 
 All items are small; ship as one release ("localhost lockdown") because several depend on each other for their guarantees. Threat model honored: single user, localhost, low-sensitivity data — this is about not being *accidentally* exposed to the LAN and the web, not enterprise auth.
 
-### ARC-5a — Bind 127.0.0.1 — **Size: S** (fixes SEC-1)
-`make_server("127.0.0.1", ...)` at `server.py:247` and the same host in `find_free_port` (`server.py:256/259`). Nothing needs the LAN bind — `bcfeed.py:22` only ever opens localhost. **AC:** `curl http://<lan-ip>:<port>/health` from another device fails; localhost works. **Compat:** anyone deliberately using bcfeed over LAN loses that — acceptable and correct for this product; not configurable (a knob here is an invitation to re-expose).
+### ARC-5a — Bind 127.0.0.1 — **Size: S** (fixes SEC-1; verified still present at e363bf4)
+`make_server("127.0.0.1", ...)` at `server.py:186` and the same host in `find_free_port` (`server.py:192-199`), **plus** the `__main__` dev entry `app.run(host="0.0.0.0", ...)` at `server.py:822`. Nothing needs the LAN bind — `bcfeed.py:22` only ever opens localhost. **AC:** `curl http://<lan-ip>:<port>/health` from another device fails; localhost works. **Compat:** anyone deliberately using bcfeed over LAN loses that — acceptable and correct for this product; not configurable (a knob here is an invitation to re-expose).
 
-### ARC-5b — Remove `ACAO:*`, validate Host — **Size: S** (fixes SEC-4 read-side)
-Delete `_corsify`'s wildcard (`server.py:148-152`, SSE at 564/623) — the app is same-origin and needs no CORS at all. Add a before-request Host check: `Host ∈ {localhost:<port>, 127.0.0.1:<port>}` else 403 — blocks DNS rebinding. **AC:** cross-origin `fetch` from a test page cannot read any endpoint; request with `Host: evil.example` → 403. **Compat:** none for the shipped app (browser sets Host to what the user typed, always localhost).
+### ARC-5b — Remove `ACAO:*`, validate Host — **Size: S** (fixes SEC-4 read-side; verified still present at e363bf4)
+Delete `_corsify`'s wildcard (`server.py:87-91`, SSE headers at 636-638/706-708) — the app is same-origin and needs no CORS at all. Add a before-request Host check: `Host ∈ {localhost:<port>, 127.0.0.1:<port>}` else 403 — blocks DNS rebinding. **AC:** cross-origin `fetch` from a test page cannot read any endpoint; request with `Host: evil.example` → 403. **Compat:** none for the shipped app (browser sets Host to what the user typed, always localhost).
 
 ### ARC-5c — Mutation guard: custom header, not a session token — **Size: S** (fixes SEC-4 write-side, SEC-6 reachability)
-Evaluated a per-launch session token embedded in the served HTML: it works, but it complicates every fetch and the SSE URL, and after 5a+5b the only remaining vector is blind cross-site form/simple-request POSTs. Requiring a custom header (`X-BCFeed-Request: 1`) on every mutating route closes that: custom headers force a CORS preflight, which fails with no `ACAO`. **Verdict: header requirement yes; session token not warranted** at this threat model — revisit only if the app ever intentionally serves non-localhost. **AC:** `curl -X POST /reset-caches` without the header → 403; a cross-origin multipart POST to `/load-credentials` from a test page never reaches the handler.
+Evaluated a per-launch session token embedded in the served HTML: it works, but it complicates every fetch and the SSE URL, and after 5a+5b the only remaining vector is blind cross-site form/simple-request POSTs. Requiring a custom header (`X-BCFeed-Request: 1`) on every mutating route closes that: custom headers force a CORS preflight, which fails with no `ACAO`. **Verdict: header requirement yes; session token not warranted** at this threat model — revisit only if the app ever intentionally serves non-localhost. **New at e363bf4:** the mutating surface grew — `/provider-config` (POST) and `/imap/discover` now accept an IMAP host/port/credentials and open an outbound connection to them, so a blind cross-site POST could make the server connect to an attacker-chosen host with attacker-chosen credentials; the header guard must cover both new routes. **AC:** `curl -X POST /reset-caches` (and `/provider-config`, `/imap/discover`) without the header → 403; a cross-origin multipart POST to `/load-credentials` from a test page never reaches the handler.
 
-### ARC-5d — OAuth scope → `gmail.readonly` + re-auth migration — **Size: S** (fixes SEC-3)
-Change `gmail.py:89` to `https://www.googleapis.com/auth/gmail.readonly` (the app only calls `messages().list/get`; docs and privacy.md already promise read-only — this is a documented-behavior violation today). **Migration:** on token load, inspect `creds.scopes`; if it includes `mail.google.com`, delete the token and report `has_token: false` — the existing missing-token modal flow then walks the user through reconnecting. The UX plan owns the one-line explanation ("bcfeed now asks for read-only access; please reconnect"). **AC:** fresh consent screen shows read-only only; a legacy full-scope token is invalidated on first launch and the reconnect flow triggers; no code path requests any other scope (grep).
+### ARC-5d — OAuth scope → `gmail.readonly` + re-auth migration — **Size: S** (fixes SEC-3; verified still present at e363bf4)
+Change `gmail_client.py:217` to `https://www.googleapis.com/auth/gmail.readonly` (the app only calls `messages().list/get`; docs and privacy.md already promise read-only — this is a documented-behavior violation today). **Migration:** on token load (`_load_stored_token`, `gmail_client.py:102-113`), inspect `creds.scopes`; if it includes `mail.google.com`, clear the keychain token (`clear_gmail_token`) and report `has_token: false` — the existing missing-credentials modal flow then walks the user through reconnecting. The UX plan owns the one-line explanation ("bcfeed now asks for read-only access; please reconnect"). **AC:** fresh consent screen shows read-only only; a legacy full-scope token is invalidated on first launch and the reconnect flow triggers; no code path requests any other scope (grep).
 
-### ARC-5e — Token as JSON, not pickle; tight perms — **Size: S** (fixes SEC-5)
-`Credentials.to_json()` → atomic write → `chmod 0600`; load via `from_authorized_user_file`. Same perms for `credentials.json` on upload. **Migration:** if `token.json` absent and `token.pickle` present → load pickle once, save JSON, unlink pickle (in practice most users re-auth anyway via 5d — the two items should ship together so there is exactly one re-auth event). **AC:** no `import pickle` in the codebase; `stat -f %Lp token.json` = 600; pickle file gone after first launch.
+### ARC-5e — Token as JSON, not pickle; tight perms — **RESOLVED upstream at e363bf4** (fixed SEC-5)
+The merge replaced pickle-on-disk with the **system keychain** (`credential_store.py`, via `keyring`) — strictly better than this item's planned JSON-file-plus-chmod: the Gmail token is stored as `Credentials.to_json()` in the keychain (`gmail_client._persist_token` → `save_gmail_token_json`), the OAuth client-secret JSON is keychain-stored too (`save_gmail_client_config_json`), and the IMAP password likewise (`provider_factory._store_imap_password_and_strip_from_config`). A legacy `token.pickle` is migrated once on load and unlinked (`gmail_client.py:128-144`); a legacy plaintext IMAP password in `provider_config.json` is migrated the same way (`provider_factory.py:80+`). **Residual work (S, fold into the 5d re-auth release):** delete the legacy-pickle migration path and `import pickle` (`gmail_client.py:1`) after one release; remove the now-vestigial `TOKEN_PATH`/`token.pickle` constants from `paths.py` once migration is retired; keep the keychain-unavailable error path (`CredentialStoreError`) surfaced in the UX plan's banner vocabulary. **AC (residual):** no `import pickle` in the codebase; no token or client-secret bytes on disk at rest (grep + data-dir inspection after a full auth cycle).
 
-### ARC-5f — `/embed-meta` URL allowlist — **Size: M** (fixes SEC-2, supports PERF-2)
-The strongest available control is that `/embed-meta` only ever *needs* to fetch pages for releases the user's own Gmail produced. Validation chain, in order:
+### ARC-5f — `/embed-meta` URL allowlist — **Size: M** (fixes SEC-2, verified still present at e363bf4 — the unvalidated fetch is now at `server.py:487-494`; supports PERF-2)
+The strongest available control is that `/embed-meta` only ever *needs* to fetch pages for releases the user's own mailbox (Gmail or IMAP) produced. Validation chain, in order:
 1. Scheme must be `https`.
 2. **Host ends with `.bandcamp.com`** → allowed directly; **any other host** (Bandcamp custom domains are legitimate) → allowed **only if the exact URL is already a key in the release cache** — i.e., it arrived via the email pipeline, not from an arbitrary caller.
 3. Resolve the host; reject private/link-local/loopback ranges (SSRF floor even for cache-listed URLs, since email content is third-party-authored).
 4. `requests.get(..., allow_redirects=False)`; on 3xx, follow at most one hop **re-running steps 1–3** on the target (custom domains commonly redirect to `*.bandcamp.com`).
 5. Cap response size (e.g. 2 MB streamed) and require the `bc-page-properties` meta before caching or returning a description — page-level verification that this is actually a Bandcamp release page, so a non-Bandcamp page's metadata is never exfiltrated into the UI or cache.
-6. Return generic error bodies (no refusal/timeout/status oracle, `server.py:426` today).
+6. Return generic error bodies (no refusal/timeout/status oracle — today `server.py:494` echoes the exception string).
 
 **AC:** requests for `http://…`, `https://192.168.1.1/…`, `https://example.com/album/x` (not in cache) all 400 with identical bodies; a custom-domain URL present in the release cache succeeds; embed cache contains only URLs that passed validation; response bodies over the cap abort. **Compat:** none — the frontend only ever requests release URLs.
 
-**Batch risk:** the only user-visible cost of ARC-5 is the one-time Gmail reconnect (5d/5e). Everything else is invisible when it works — which is exactly the point.
+**Batch risk:** the only user-visible cost of ARC-5 is the one-time Gmail reconnect (5d; 5e's storage migration already happened upstream). Everything else is invisible when it works — which is exactly the point.
 
 ---
 
@@ -236,8 +241,8 @@ The strongest available control is that `/embed-meta` only ever *needs* to fetch
 
 ### Prerequisite hygiene (do first, tiny, valuable even if packaging never ships)
 - Single `VERSION` constant in `paths.py` (or `__init__`), surfaced in `/config.json` and the header — today the tap says v1.0-beta2, the HTML hardcodes "v1.0", the working repo has no tags.
-- `pyproject.toml` with pinned deps replacing `requirements.txt` (which lists `requests` twice, uses the `bs4` shim, pins nothing while the formula pins everything). One Python version story (pick 3.11 to match the formula).
-- `resource_path()` helper in `paths.py` used by *all* bundled assets (dashboard files, docs, templates) — today none are bundle-aware while `gmail.py:42-44` has a dead `_MEIPASS` branch for exactly the file that must **never** be bundled (an OAuth client secret inside a distributed binary contradicts the user-owned-credentials privacy model). Delete that branch.
+- `pyproject.toml` with pinned deps replacing `requirements.txt` (uses the `bs4` shim, pins nothing while the formula pins everything; the merge added three more unpinned deps — `keyring`, `markdown-it-py`, `linkify-it-py`). One Python version story (pick 3.11 to match the formula).
+- `resource_path()` helper in `paths.py` used by *all* bundled assets (dashboard files, docs, `templates/docs.html`) — today none are bundle-aware while `gmail_client.py:52-55` still has a `_MEIPASS` branch for exactly the file that must **never** be bundled (an OAuth client secret inside a distributed binary contradicts the user-owned-credentials privacy model). Delete that branch.
 
 ### Options considered
 - **PyInstaller `.app`** — smallest delta: a windowed onedir bundle whose entry point is the existing `bcfeed.main` (start server, open browser). Known costs: spec-file `datas` for the seven assets (solved by `resource_path()`), hidden-import fiddling for `googleapiclient`, Gatekeeper.
@@ -249,7 +254,7 @@ The strongest available control is that `/embed-meta` only ever *needs* to fetch
 
 ### Risk / compat
 - Gatekeeper friction for unsigned apps is real; document it honestly rather than pretending it away.
-- PyInstaller + google-api-python-client is a known hidden-imports tarpit; time-box it, and keep the CLI path first-class so packaging trouble never blocks users.
+- PyInstaller + google-api-python-client is a known hidden-imports tarpit (and `keyring`'s backend discovery joins that watchlist since e363bf4); time-box it, and keep the CLI path first-class so packaging trouble never blocks users.
 - App translocation: onedir in a `.dmg`/zip is fine as long as no writes ever target the bundle — all writes already go to the data dir; the deleted `_MEIPASS` credentials branch was the one violation of this.
 
 ### Acceptance criteria
@@ -263,22 +268,23 @@ The strongest available control is that `/embed-meta` only ever *needs* to fetch
 
 ## ARC-7 — Test baseline: pytest + one Playwright smoke + CI
 
-The heuristics that hold the product up (email-copy regexes `gmail.py:249-292`, Bandcamp DOM selectors `bandcamp.py:11-58`, hand-rolled markdown) are exactly the code that regresses silently, and there are zero tests and no CI today (ARCH-10, PY-4). This is the multiplier item: everything above becomes safe to do once it exists.
+The heuristics that hold the product up (email-copy parsing, now conveniently extracted to `bandcamp_email_parser.py`; Bandcamp DOM selectors `bandcamp.py:11-58`; IMAP folder ranking `server.py:351-371`) are exactly the code that regresses silently, and there are zero tests and no CI today (ARCH-10, PY-4). The merge made this *easier* (parser importable without Gmail plumbing) and *more urgent* (stricter IMAP-driven parsing in `bandcamp_email_parser` now serves two providers). This is the multiplier item: everything above becomes safe to do once it exists.
 
 ### ARC-7a — The 3-line seam — **Size: S**
 `paths.get_data_dir()` reads `BCFEED_DATA_DIR` env var before defaulting; keep the import-time directory creation but make it use that result. Unlocks `tmp_path`-isolated tests for the whole persistence + pipeline layer. Also introduce a single `today()` helper (in `util.py`) replacing the six inline `datetime.date.today()` call sites, so the today-exclusion logic (subject of the most recent bugfix, 598a9dd) is testable via monkeypatching one name. **AC:** importing `session_store` in a test with the env var set touches only the tmp dir.
 
 ### ARC-7b — pytest suite (~25 cases) — **Size: M**
-Fixtures: one saved real Bandcamp notification email (HTML part), one plain-text-only email (the PY-3 crasher), one saved release page, one page without `bc-page-properties`, golden HTML for `SETUP.md`.
+Fixtures: one saved real Bandcamp notification email (HTML part), one plain-text-only email (the original PY-3 crasher, now the skip-path regression), one non-Bandcamp email (IMAP search is less precise than Gmail's — the stricter parsing must reject it), one saved release page, one page without `bc-page-properties`, golden HTML for `SETUP.md`.
 
 | Area | Cases |
 |---|---|
 | `util` | `parse_date` (ISO / `YYYY/MM/DD` / RFC 2822 / None / garbage), `dedupe_by_url`, `dedupe_by_date` with a malformed cached date (PY-7 regression) |
 | `session_store` | store round-trips, corruption → preserved-not-overwritten (ARC-2a AC), `collapse_date_ranges`, `cached_releases_for_range` today-exclusion (frozen clock) |
-| `pipeline` | persist-before-mark ordering (ARC-2a AC), junk-row guard (PY-5), max-results path |
-| `gmail` parsing | `scrape_info_from_email` on fixture emails incl. no-HTML-part (PY-3) and no-Date-header |
+| `pipeline` | persist-before-mark ordering (ARC-2a AC), junk-row guard (PY-5), max-results path, empty-body skip (PY-3 — fixed upstream at `pipeline.py:48-50`; fixture becomes the regression test) |
+| `bandcamp_email_parser` | `parse_release_email` on fixture emails incl. no-HTML-part, no-Date-header, and a non-Bandcamp email the stricter IMAP-era parsing must reject |
+| `imap_client` | search-criteria construction and folder-list parsing against canned server responses; `_imap_folder_rank` ordering |
 | `bandcamp` | `extract_bc_meta` valid/invalid content (PY-10 `literal_eval` path), description fallbacks, `get_embed_meta` cache-first (ARC-3 AC) |
-| `docs` renderer | golden render of `SETUP.md`; `[label](https://…)` link regression (PY-6); `javascript:` href rejected |
+| docs rendering | markdown-it-py config render of `SETUP.md` (PY-6 link mangling fixed upstream by the library swap — one golden pins the config: links, code fences, `javascript:` href rejected) |
 | routes (Flask test client) | `/reset-caches` flag matrix (PY-13), viewed-state concurrency (ARC-2a AC), Host/header guards (ARC-5b/c ACs), `max_results` non-numeric input |
 
 No mocks of Gmail/OAuth at this tier — the network edge stays untested by design; the parsing behind it is fully covered by fixtures.
@@ -291,7 +297,7 @@ One workflow, `ubuntu-latest`, on push/PR: `pip install -e . && ruff check . && 
 
 **Risk:** near zero; the only trap is over-testing (snapshotting volatile things). Keep goldens limited to the markdown renderer, where mangling is the known live bug.
 
-**Acceptance criteria:** (1) `pytest` green locally in < 30 s with no network; (2) CI red on a deliberate revert of the PY-6 link fix or the pipeline reorder; (3) smoke runs against a fresh checkout with one command documented in the README dev section.
+**Acceptance criteria:** (1) `pytest` green locally in < 30 s with no network; (2) CI red on a deliberate break of the email-parser fixtures or a revert of the pipeline reorder; (3) smoke runs against a fresh checkout with one command documented in the README dev section.
 
 ---
 
@@ -303,7 +309,7 @@ Recorded so future contributors don't "improve" past the product's shape:
 - No async rewrite (threads + one lock/SQLite are sufficient at single-user concurrency).
 - No client-server auth beyond ARC-5 (no accounts, no HTTPS on loopback).
 - No database server, no Docker, no telemetry/crash reporting.
-- No plugin system for sources — IMAP, when it comes, is a module and a `source` column, both provisioned above.
+- No plugin system for sources — IMAP landed upstream (e363bf4) as exactly the intended shape: an interface (`email_provider.py`) plus provider modules, not a plugin framework. The `source` column (ARC-2b) remains the one missing half. No third source is planned.
 
 ## Cross-plan notes
 

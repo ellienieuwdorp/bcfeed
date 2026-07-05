@@ -2,8 +2,10 @@
 
 **Direction:** Calm Slate — system normalization of the existing dark-tool language.
 **Status:** Approved direction (3-judge panel), full implementable spec. No code changes yet.
-**Scope:** `dashboard.css` (839 lines), `dashboard.html` (185 lines), small template-string edits in `dashboard.js`. No framework, no build step, no new dependencies.
-**Evidence:** verified audit findings (`docs/` audit set; finding IDs UI-1..15, UX-*, JS-*, ARCH-* referenced throughout) and the design-system inventory of `dashboard.css`/`dashboard.html` (line numbers cited as `css:` / `html:` / `js:` refer to the current files at commit `598a9dd`).
+**Scope:** `dashboard.css` (1,058 lines), `dashboard.html` (306 lines), small template-string edits in `dashboard.js`, plus normalization of the post-merge settings/provider surface (§6.12). No framework, no build step, no new dependencies.
+**Evidence:** verified audit findings (`docs/` audit set; finding IDs UI-1..15, UX-*, JS-*, ARCH-* referenced throughout) and the design-system inventory of `dashboard.css`/`dashboard.html` (line numbers cited as `css:` / `html:` / `js:` refer to the current files at commit **`e363bf4`**).
+
+**Line-reference note (revalidated 2026-07-05 against `e363bf4`):** the IMAP-provider merge changed the three frontend files in a fortunately localized way — `dashboard.css` grew 839 → 1,058 lines *by pure append* (a new settings/provider block at css:837-1058), so **every `css:` reference ≤ 835 in this spec is unchanged and still valid**. `dashboard.html` lines 1-114 are untouched (all `html:` refs ≤ 114 stand); the settings modal region was rebuilt as html:116-267 and the credential modals moved to html:274-301 — refs in those regions are updated below. `dashboard.js` lines 1-59 are untouched; refs past line 60 shifted **+3**, and a 392-line provider/IMAP controller was appended at js:1702-2093 — all load-bearing `js:` refs below are updated. The appended CSS is a *third* styling generation with fresh token-spec violations; §6.12 (UIR-30) specifies its normalization.
 
 Every spec chunk has a stable ID **UIR-n** and a size: **S** (< half a day), **M** (half–1 day), **L** (1–2 days).
 
@@ -19,7 +21,7 @@ Derived from the product brief: *practical-first; a calm, reliable local utility
 4. **The accent is a learnable signal.** One accent family. Accent means "new music / your selection / the primary action." It never appears on progress bars, toast bodies, or decorative chrome, so it stays meaningful.
 5. **Shadows mean elevation, motion means feedback.** Shadows only on things that float (modals, toasts). Motion only on color/opacity, 120 ms, one token. No hover-lifts, no glows, no animations except the spinner and the indeterminate progress sweep.
 6. **Plain language, proper primitives.** The raw log box becomes a status strip + progress + banner/toast system. Disabled controls explain themselves in a sentence-case hint line. Sentence case everywhere; nothing below 12 px.
-7. **The settings modal is the reference surface — rebuilt properly.** Its flat, labeled, restrained look (UI-10 calls it "the right visual direction built the wrong way") becomes the system-wide language, expressed as tokens and classes instead of inline styles.
+7. **The settings modal is the reference surface — rebuilt properly.** Its flat, labeled, restrained look (UI-10 calls it "the right visual direction built the wrong way") becomes the system-wide language, expressed as tokens and classes instead of inline styles. The e363bf4 merge rebuilt the panel's *structure* in this direction (sections, form primitives) but wrote its *colors* outside the token discipline — §6.12 closes that gap.
 8. **Preserve what works:** the dense sortable table, calendar-as-coverage-map, star-triggers-preload, keyboard shortcuts (surfaced, no longer secret — UX-14), and local-first privacy.
 
 ---
@@ -35,11 +37,11 @@ Judge tally (higher = better): **Liner Notes 102.5, Calm Slate 98, Stockbook 83.
 
 ## 3. Token spec (UIR-2, M — the foundation commit)
 
-This block **replaces** `dashboard.css:1-25` (current `:root` + `.theme-light`). Dark is the default (`:root`); light is activated by the **existing** `body.theme-light` class toggle (`js:279`) — the JS mechanism is unchanged.
+This block **replaces** `dashboard.css:1-25` (current `:root` + `.theme-light`). Dark is the default (`:root`); light is activated by the **existing** `body.theme-light` class toggle (`js:282`) — the JS mechanism is unchanged.
 
 **Rules:**
 - No color literal (hex, `rgb()`, `rgba()`, named color) may appear anywhere in `dashboard.css`, `dashboard.html`, or `dashboard.js` outside this block. Review gate: `grep -nE '#[0-9a-fA-F]{3,8}|rgba?\(' dashboard.css dashboard.html dashboard.js` must return only this block.
-- This kills, by construction: the four blues (UI-11: `--accent` cyan vs `#64a8ff` vs light `#1f7aff` vs `rgba(64,150,210,…)`), the four reds (`#ff5f5f`, `#ff6b6b`, `#b83a3a`, `#ffc5c5` — css map §1.2), every hardcoded cyan tint that ignores the light theme (css:59,152,159,507-508,552-553,566,581-582,690-692), every white-alpha control fill that vanishes on white (css:74,124,406,424,477,492,729), and the undefined `--header-bg` (css:64).
+- This kills, by construction: the four blues (UI-11: `--accent` cyan vs `#64a8ff` vs light `#1f7aff` vs `rgba(64,150,210,…)`), the four reds (`#ff5f5f`, `#ff6b6b`, `#b83a3a`, `#ffc5c5` — css map §1.2; the merge *re-introduced* the `#ff6b6b` family in the appended settings block, css:1045-1052 — §6.12), every hardcoded cyan tint that ignores the light theme (css:59,152,159,507-508,552-553,566,581-582,690-692, plus the appended focus ring `rgba(82,208,255,0.15)` at css:940), every white-alpha control fill that vanishes on white (css:74,124,406,424,477,492,729, plus css:876 in the appended block), and the undefined `--header-bg` (css:64).
 
 ```css
 /* ===== Calm Slate tokens — dark is default (:root), light via body.theme-light ===== */
@@ -166,7 +168,7 @@ body.theme-light {
 ::-webkit-scrollbar-track { background: transparent; }
 ```
 
-**Theme seeding (3-line JS change, ships with this block):** on startup, if no stored theme preference exists, seed from `matchMedia('(prefers-color-scheme: light)')`; a stored setting always wins. The `#theme-toggle` checkbox (html:123) and `body.theme-light` mechanism are otherwise untouched.
+**Theme seeding (3-line JS change, ships with this block):** on startup, if no stored theme preference exists, seed from `matchMedia('(prefers-color-scheme: light)')`; a stored setting always wins. The `#theme-toggle` checkbox (now a visible "Dark mode" setting, html:130-131) and `body.theme-light` mechanism are otherwise untouched.
 
 ---
 
@@ -176,7 +178,7 @@ body.theme-light {
 
 **Font:** system stack via `--font-ui` (SF Pro on the target macOS/Chrome). The phantom `"Inter"` at css:37 — never loaded, silently falling back to Helvetica/Arial — is dropped. `--font-mono` is used in exactly one place: the activity-log detail well.
 
-**Five sizes, three weights (400/500/600). Zero `letter-spacing`. Zero `text-transform`.** The current 11 sizes (22/20/18/16/15/14/13/12/11/10px — css map §1.3), five letter-spacing values (css:80,101,157,187,196,341,346,392,…), and both uppercase mechanisms (CSS `text-transform` at css:156,189,347,420,656 **and** hardcoded ALL-CAPS HTML strings at html:15,39,51,76) are all removed. Nothing renders below 12 px — the 10 px badge (css:154), today-button (css:429), and sort-indicator (css:669) sizes are eliminated.
+**Five sizes, three weights (400/500/600). Zero `letter-spacing`. Zero `text-transform`.** The current 11 sizes (22/20/18/16/15/14/13/12/11/10px — css map §1.3), five letter-spacing values (css:80,101,157,187,196,341,346,392,…), and both uppercase mechanisms (CSS `text-transform` at css:156,189,347,420,656, **plus** the merge-appended `.settings-section-title` — 11px uppercase with 0.8px tracking, css:897-903 — **and** hardcoded ALL-CAPS HTML strings at html:15,39,51,76) are all removed. Nothing renders below 12 px — the 10 px badge (css:154), today-button (css:429), and sort-indicator (css:669) sizes are eliminated, as is the 11 px section title (css:898).
 
 | Token | Size / weight | Line-height | Used for |
 |---|---|---|---|
@@ -199,7 +201,7 @@ Assignments:
 - Table cells **6px 10px** — kept dense; 6 is the *only* sanctioned half-step, for table cells only.
 - Control padding **6px 12px** (`.button-sm`: 4px 10px). Grid/flex gaps **8 or 12**.
 - Calendar: grid gap **4**, day-cell min-height **32px**, calendar card padding **12**.
-- Modal sections separated by `gap: 16` on the panel grid — the literal spacer divs (`style="height:12px"`, html:130,134) are **deleted**.
+- Modal sections separated by `gap: 16` on the panel grid — the literal spacer divs of the old settings modal were already deleted upstream when the panel was rebuilt (`.settings-group` gap, css:905-909); no new spacers may be introduced.
 - Magic numbers replaced: `.layout` becomes a `100vh` grid with `grid-template-rows: auto 1fr` per column instead of `calc(100vh - 70px)` (css:173 — the 70px is a phantom header height, css map §4); calendar min-heights derive from cell size, not the `187px`/`290px` literals (css:438,381).
 
 ### 4.3 Radii (UIR-5, S)
@@ -272,9 +274,9 @@ One channel per state (fixes UI-6's chrome-outshouts-data inversion):
 - **Unseen dot** (replaces `.row-dot`, css:103-115): encoded **only** by the interactive dot — 8px, `var(--accent)` (no more `#ff5f5f` alarm red for the default state — UI-6), `border-radius: var(--radius-full)`, centered in a **24px hit area** (Calm Slate graft — the clean recipe for the click target). When read: `visibility: hidden` at rest, but on row hover it renders as an 8px **hollow ring** (1px `var(--text-faint)`) so the toggle-back target is discoverable — fixes the invisible-but-interactive `opacity:0` + `cursor:pointer` trap (css:113-115; UI-12).
 - **Starred rows:** the gold inset ring (css:678-680) is deleted — the filled star icon is the sole indicator.
 - **`.star-btn`** (css:116-145): 28px borderless icon button, 16px SVG star, stroke `var(--text-muted)`; hover: `var(--control-bg-hover)` circle behind it, **no lift, no shadow, no recolor-to-accent**; `.starred`: filled `var(--star)`.
-- **`.badge`** (replaces `.cached-badge`, css:146-161): text **"Saved"** (sentence case, not CACHED), 12px/500, padding 1px 6px, `var(--radius-sm)` (not a pill), bg `var(--accent-tint)`, text `var(--accent)`, 1px `var(--accent-border)`. **Hidden unless the existing dev "show cached" setting (html:127) is on** — internal plumbing leaves the default view (UI-13; light-mode 3.65:1 fixed by tokens regardless).
+- **`.badge`** (replaces `.cached-badge`, css:146-161): text **"Saved"** (sentence case, not CACHED), 12px/500, padding 1px 6px, `var(--radius-sm)` (not a pill), bg `var(--accent-tint)`, text `var(--accent)`, 1px `var(--accent-border)`. **Hidden unless the "show cached" setting (html:134 — since the merge a visible Appearance setting, default *on*) is on; the default returns to off** — internal plumbing leaves the default view (UI-13; light-mode 3.65:1 fixed by tokens regardless).
 - **Detail panel:** `.detail-desc` (css:721-733) drops its dashed border (the wireframe idiom's last outpost) for 1px `var(--border)` + `var(--surface-inset)`; `.embed-wrapper` (css:793-800) drops its shadow for the standard card border.
-- Row template strings in `renderTable` (js:756-769) get the new class names — **and the escaping fix from JS-1 lands in the same templates** (same lines, one pass).
+- Row template strings in `renderTable` (js:759-772) get the new class names — **and the escaping fix from JS-1 lands in the same templates** (same lines, one pass).
 
 ### 6.4 Calendar (UIR-13, L)
 
@@ -282,48 +284,48 @@ The `<details>` container becomes a standard `.panel-card` (surface, 1px `var(--
 - **Delete** `.wireframe-panel` dashed border (css:261-273), `.wireframe-body` 45° hatch (css:349-361), and rename the `wireframe-*` classes (UI-7 — the single strongest "generated/unfinished" signal on screen).
 - The disabled-calendar overlay (css:274-305, a second differently-angled hatch) becomes a plain semi-opaque `var(--bg)` veil at 60% + a centered 12px muted hint. No hatch.
 - **Nav:** two 24px `.button-icon`s (SVG chevrons replace `‹`/`›` text glyphs); month label 12px/600 `var(--text)` with `min-width: 9ch` + `tabular-nums` (Liner Notes graft — replaces the fixed 110px at css:415); Today = `.button-sm`.
-- **Day cells** (css:484-584, JS-built at js:1241-1276): 32px min, `var(--radius-sm)`, **transparent at rest** (no white-alpha fill), `tabindex="0"` (Stockbook graft — focusable ground for the UX plan's grid semantics). One visual channel per state:
+- **Day cells** (css:484-584, JS-built at js:1244-1279): 32px min, `var(--radius-sm)`, **transparent at rest** (no white-alpha fill), `tabindex="0"` (Stockbook graft — focusable ground for the UX plan's grid semantics). One visual channel per state:
   1. **Selected range:** bg `var(--accent-tint)`; endpoints `.range-edge`: `var(--accent-tint-strong)` + 1px `var(--accent-border)`. (Replaces the in-range gradient css:506-509 and its verbatim duplicate on `.selected` css:580-584 — endpoints become distinguishable, fixing the UI-5 collapse.)
   2. **Coverage:** fetched days = day number in `var(--text)`; unfetched days = `var(--text-faint)` number — gaps read as literally faded out, making them findable at a glance (UX-13). The white-on-blue date-label pill that computed to 1.26:1 in light (css:502-505; UI-2) is deleted.
   3. **Unseen releases:** a single 4px `var(--accent)` dot under the number — replaces the pill + red-dot stack (css:510-538) and its halos (UI-5/UI-2).
   4. **Today:** 1px inset ring `var(--border-strong)`.
   5. **Hover:** `var(--control-bg)` fill. No lift, no shadow (deletes css:564-568).
   6. **Disabled/future:** `var(--text-faint)`, no hover, `cursor: default` (replaces opacity+dashed at css:573-579).
-- **Delete dead rules:** all `.calendar-day.scraped*` glow-ring variants (css:539-561) — confirmed dead code (UI-5 correction: js:1261 applies `unseen-day`, never `scraped`).
-- **Class changes in `renderCalendar` (js:1241-1276):** two distinct channels, not one rename:
-  - The scraped-driven class (js:1260-1262; misnamed `unseen-day`, renamed `populated-day` by CQ-37/WP-19 — it marks *fetched* days, not unseen ones) maps onto the coverage channel: drop it in favor of the new `unfetched` class on unfetched days (fetched days are the unmarked default). Keeping `populated-day` on fetched days is acceptable but redundant.
-  - `has-unseen` is a **new** class, applied from the existing `hasUnseen` computation (js:1254-1259), driving the 4px accent dot. It is *not* a rename of `unseen-day`/`populated-day` — that would attach unseen semantics to every fetched day.
+- **Delete dead rules:** all `.calendar-day.scraped*` glow-ring variants (css:539-561) — confirmed dead code (UI-5 correction: js:1264 applies `unseen-day`, never `scraped`).
+- **Class changes in `renderCalendar` (js:1244-1279):** two distinct channels, not one rename:
+  - The scraped-driven class (js:1263-1265; misnamed `unseen-day`, renamed `populated-day` by CQ-37/WP-19 — it marks *fetched* days, not unseen ones) maps onto the coverage channel: drop it in favor of the new `unfetched` class on unfetched days (fetched days are the unmarked default). Keeping `populated-day` on fetched days is acceptable but redundant.
+  - `has-unseen` is a **new** class, applied from the existing `hasUnseen` computation (js:1257-1262), driving the 4px accent dot. It is *not* a rename of `unseen-day`/`populated-day` — that would attach unseen semantics to every fetched day.
   - Add `range-edge` for range endpoints.
 - **Legend** (inline-styled pills at html:38-45) rebuilt with real classes (`.legend-row`, `.legend-dot`) matching the new encodings; labels sentence-cased and de-jargoned ("Checked", "Has new releases" — final copy owned by the UX plan).
 - Cells get `:focus-visible` support so the keyboard work from the UX/a11y plan lands on styled ground.
 
 ### 6.5 Buttons (UIR-14, M)
 
-Four variants replace the base class + three inline-style size hacks (html:46,52,54-55,132,137,141,144):
+Four variants replace the base class, the remaining inline-style size hacks (html:46,52,54-55), **and** the merge-appended `.button.primary`/`.button.danger` pair (css:1035-1052 — parallel variants with literal colors that must fold into the token-built variants below; §6.12):
 
 - **`.button`** (replaces css:70-92): `var(--control-bg)`, 1px `var(--control-border)`, `var(--radius-sm)`, 13px/500, padding 6px 12px; hover `var(--control-bg-hover)`; active slightly darker. **Disabled: never opacity** (Liner Notes graft replacing the base direction's `opacity: 0.55` — and the current `opacity:.45 + grayscale` at css:86-92): label goes `var(--text-faint)` on normal `--control-bg`, `cursor: not-allowed` — the label stays readable. Paired with the **`.hint-text` primitive**: a 12px `var(--text-muted)` line under the button carrying a plain-language reason ("These dates were already checked"), satisfying the brief's disabled-state-explanations requirement.
-- **`.button-primary`** (Populate only): solid `var(--accent)` + `var(--on-accent)` text — passes AA in both themes **by token construction** (fixes UI-1's 1.34:1/1.06:1 light-mode disaster at html:52).
-- **`.button-danger`** (Clear cache, Clear credentials, Revoke): transparent bg, `var(--danger-text)` + 1px `var(--danger-border)`; hover `var(--danger-tint)`. Replaces the ad-hoc `#b83a3a` inline treatment (html:144).
-- **`.button-sm`**: padding 4px 10px, 12px (replaces the inline `6px 10px / 12px` shrinks at html:54-55,132,137,141).
+- **`.button-primary`** (Populate; also absorbs the appended `.button.primary` used by `Load credentials file`, `Connect & load folders`, `Save IMAP Configuration`): solid `var(--accent)` + `var(--on-accent)` text — passes AA in both themes **by token construction** (fixes UI-1's 1.34:1/1.06:1 light-mode disaster at html:52).
+- **`.button-danger`** (Clear cache, Clear credentials, Revoke): transparent bg, `var(--danger-text)` + 1px `var(--danger-border)`; hover `var(--danger-tint)`. Replaces the merge's `.button.danger` and its `#ff6b6b` family (css:1044-1052) — the old `#b83a3a` inline treatment already became that class upstream (html:164).
+- **`.button-sm`**: padding 4px 10px, 12px (replaces the inline `6px 10px / 12px` shrinks at html:54-55).
 - **`.button-icon`**: 28–32px square, centered 16px sprite SVG (gear, help, close, nav chevrons, status chevron, back-to-top).
 - `.toggle-button.toggle-active` (css:93-97) keeps its correct-by-construction accent fill + `var(--on-accent)` text — it was the only control that already themed correctly.
 - No `translateY`, no hover shadows, anywhere.
 
 ### 6.6 Inputs & filter list (UIR-15, S)
 
-- **All checkboxes:** `accent-color: var(--accent)` — kills the `#ff6b6b` show-only accent (css:223) and unifies the unstyled settings checkboxes (html:123,127). 16px, aligned with 8px gap to 13px labels.
-- **Filter list** (js:483-527): the two unlabeled checkbox columns get 12px SVG column glyphs (eye = show, funnel = only) with `title` tooltips — an interim legibility fix until the UX plan reworks the control itself (UX-8). Counts right-aligned, 12px `var(--text-faint)` `tabular-nums`.
-- Hidden text inputs (html:58-61,140) stay hidden. A **`.input`** spec ships for future use: `var(--control-bg)`/`var(--control-border)`, `var(--radius-sm)`, padding 6px 10px, 13px.
+- **All checkboxes:** `accent-color: var(--accent)` — kills the `#ff6b6b` show-only accent (css:223) and unifies the settings checkboxes (html:130,134). 16px, aligned with 8px gap to 13px labels.
+- **Filter list** (js:486-530): the two unlabeled checkbox columns get 12px SVG column glyphs (eye = show, funnel = only) with `title` tooltips — an interim legibility fix until the UX plan reworks the control itself (UX-8). Counts right-aligned, 12px `var(--text-faint)` `tabular-nums`.
+- Hidden text inputs (html:58-61, plus the hidden creds file input html:161) stay hidden. The **`.input`** spec is no longer speculative: the merge shipped `.form-input`/`.form-select`/`.form-label` (css:912-955) for the IMAP panel — these are structurally right and are *retained*, re-expressed on tokens (`var(--control-bg)`/`var(--control-border)`, `var(--radius-sm)`, padding 6px 10px, 13px; the white-alpha fill and hardcoded cyan focus ring go — §6.12).
 
 ### 6.7 Modals (UIR-16, M)
 
-**One system for all four** (settings css:744-762; credentials-needed/load-credentials css:763-783; max-results css:585-605; server-down css:806-826 — ending the two-generation split of UI-10):
+**One system for all four** (settings css:744-762 *plus* its merge-appended second generation css:841-884; credentials-needed/load-credentials css:763-783, markup now at html:274-301; max-results css:585-605; server-down css:806-826 — ending what is now a *three*-generation split of UI-10):
 
 - `.modal-backdrop`: fixed inset-0, `var(--backdrop)`, z `var(--z-modal)`, flex-center. One backdrop opacity, one z-layer.
 - `.modal`: `var(--surface-raised)`, `var(--radius-md)`, `var(--shadow-2)`, 1px `var(--border)`, padding 20, max-width 400, `display: grid; gap: 16`.
 - `.modal-header`: 16px/600 title + `.button-icon` close (sprite ✕, replacing the text glyph).
 - `.modal-body`: 13px/1.45. `.modal-actions`: flex-end, gap 8. `.modal-section-title`: `.micro-label`.
-- **Settings modal content is de-inlined** into these classes (html:116-147: header flex, spacer divs, per-button paddings, inline "Credentials:" label all become classes/gap). Destructive actions grouped **last** under a "Danger" section title, using `.button-danger`. An about line ("bcfeed v1.0") gives the version its new home.
+- **Settings panel (html:116-267, rebuilt in the merge)**: the new structure — `.settings-header`, `.settings-content-scroll`, `.settings-section`/`.settings-section-title`/`.settings-group`, per-provider `.provider-panel`s — is **kept**; its section order already matches the UX plan. This spec re-expresses its rules on tokens and removes the ~25 inline layout styles inside the IMAP panel (html:175-216: flex columns, gaps, min-widths become classes). `.settings-section-title` becomes `.micro-label` (drops 11px/uppercase/tracking, css:897-903). Destructive actions grouped **last** under a "Danger" section title, using `.button-danger`. An about line ("bcfeed v1.0") gives the version its new home.
 - Max-results and server-down adopt the shared radius/backdrop/z (their content/dismissability fixes — JS-2, UX-15 — belong to the UX plan; this spec only normalizes their chrome).
 
 ### 6.8 Links (UIR-17, S)
@@ -345,7 +347,29 @@ One inline-SVG set: 16px viewBox, 1.5px stroke, `currentColor`, Lucide-style geo
 
 **Set (15):** gear, help-circle, x, chevron-down, chevron-left, chevron-right, star, check-circle, alert-circle, alert-triangle, arrow-up, external-link, loader (spinner), eye, funnel.
 
-Retires all four current icon systems (UI-8 item 3): the ⚙️ emoji (html:79), the "?" text button (html:80), the `▾`/`‹`/`›` glyphs (html:22,31,33,106), and ✕; the inline star SVG in `dashboard.js:759` joins the sprite.
+Retires all five current icon systems (UI-8 item 3): the ⚙️ emoji (html:79), the "?" text button (html:80), the `▾`/`‹`/`›` glyphs (html:22,31,33,106), ✕, and the merge's inline info-circle SVG in the IMAP panel (html:210 — 13px/2px-stroke, a fifth geometry; becomes the sprite's `help-circle` or a new `info` symbol); the inline star SVG in `dashboard.js:763` joins the sprite.
+
+### 6.12 Settings & provider surface normalization (UIR-30, M — new at e363bf4)
+
+The IMAP-provider merge appended a third styling generation to `dashboard.css` (css:837-1058, "Enhanced Settings Panel Styles") and rebuilt the settings markup (html:116-267). Structurally it is the best surface in the app — labeled sections, real form primitives, inline status text — and this spec **keeps its architecture**. But it was written outside the token discipline and must be normalized in the token/WP-20 pass, not grandfathered:
+
+**Conflicts with the token spec (must change):**
+
+1. **Rule shadowing:** the appended `.settings-panel` (css:841) silently overrides the original `.settings-panel` (css:753) by source order; `.settings-header .button` re-styles `.button` locally. Delete the superseded first-generation rules (css:753-783) and express the panel once.
+2. **Color literals:** white-alpha hover fill `rgba(255,255,255,0.05)` (css:876 — invisible-on-white in light theme, the exact UI-4 failure class); hardcoded focus ring `rgba(82,208,255,0.15)` box-shadow on `.form-input:focus` (css:940 — pins the *dark* accent in both themes and duplicates the global `:focus-visible` mechanism); the `#ff6b6b` danger family (css:1045-1052) re-introducing one of UI-11's four reds. All become `var(--control-bg-hover)`, the global focus ring, and `--danger-*` tokens respectively.
+3. **Parallel button variants:** `.button.primary` / `.button.danger` (css:1035-1052) duplicate UIR-14's `.button-primary` / `.button-danger` with literal colors. Fold them in (rename in html/js templates; the classes are toggled from the provider controller, js:1702-2093).
+4. **Typography violations:** `.settings-section-title` is 11px uppercase with 0.8px letter-spacing (css:897-903) — below the 12px floor, both banned mechanisms. Becomes `.micro-label`. Title-case labels (`Folder To Scan`, `Save IMAP Configuration`, `Manual Folder Name`) become sentence case (copy owned by the UX plan's provider-settings map).
+5. **Inline-style sprawl, second wave:** ~25 new `style=""` attributes lay out the IMAP panel's two-column form (html:175-216) — column/gap/min-width classes replace them (`.form-row`, `.form-col`).
+6. **Fifth icon system:** the inline info-circle SVG (html:210, 13px/2px stroke) joins the UIR-20 sprite; the app-password hint it gates becomes visible `.hint-text` (UX plan call).
+
+**Adopted from the new surface (kept, re-expressed on tokens):**
+
+- `.form-input` / `.form-select` / `.form-label` (css:912-955) — this *is* UIR-15's `.input` spec, shipped early; keep the names, swap literals for `var(--control-bg)`/`var(--control-border)`/`var(--radius-sm)`.
+- `.help-text` (css:957-962) — merges with UIR-14's `.hint-text` primitive (one name; `.hint-text` wins as it also serves disabled-button explanations).
+- `.settings-section` / `.settings-group` layout and the scrollable `.settings-content-scroll` container.
+- Inline status text placed next to the button that caused it (`.imap-status-text`) — the UXP-2 locus-of-action pattern, kept and given semantic `--success-text`/`--danger-text` classes instead of JS-set colors.
+
+**Acceptance criteria:** the §11 greps return zero for the appended block too (no literals outside the token block, no `.button.primary`/`.button.danger`, no uppercase/letter-spacing, no sub-12px); the settings panel renders correctly in **both** themes (the current white-alpha hover and dark-pinned focus ring make light mode fail today); exactly one generation of `.settings-panel` rules exists.
 
 ---
 
@@ -365,7 +389,7 @@ The raw 200px log box (`.calendar-log`, css:440-459 — misnamed, it is the stat
 
 ### 7.2 Details disclosure (UIR-23, S)
 
-The chevron expands `.activity-detail`: auto-height up to `max-height: 200px`, `var(--surface-inset)`, `var(--font-mono)` 12px `var(--text-muted)` (a log finally set in monospace), error lines `.log-error` in `var(--danger-text)`, warnings `.log-warn` in `var(--warn-text)`. **Collapsed by default, auto-expanded on error** (Calm Slate graft). This preserves the full log for the curious without making blue fake-link prose the primary channel (UI-9); the hardcoded `#64a8ff` at js:565,570 becomes these classes.
+The chevron expands `.activity-detail`: auto-height up to `max-height: 200px`, `var(--surface-inset)`, `var(--font-mono)` 12px `var(--text-muted)` (a log finally set in monospace), error lines `.log-error` in `var(--danger-text)`, warnings `.log-warn` in `var(--warn-text)`. **Collapsed by default, auto-expanded on error** (Calm Slate graft). This preserves the full log for the curious without making blue fake-link prose the primary channel (UI-9); the hardcoded `#64a8ff` at js:568,573 becomes these classes.
 
 ### 7.3 Banners + toasts (UIR-24, M)
 
@@ -402,21 +426,21 @@ Every audited smell item, with its landing spec:
 | 1 | Neon ambient gradients (UI-8) | body radial gradients css:33-34, 41-45 | Flat `var(--bg)`; rules deleted | UIR-10 |
 | 2 | Static glow rings (UI-8) | css:528 (dot halo), 553/559 (scraped-selected) | Deleted; dot = flat 4px accent; scraped rules were dead code | UIR-13 |
 | 3 | Wireframe chrome in production (UI-7) | `.wireframe-panel` dashes css:261-273, `.wireframe-body` hatch css:349-361, disabled hatch css:282-288, `.detail-desc` dashes css:726 | Standard `.panel-card`: surface + 1px `var(--border)` + `var(--radius-md)`; veil replaces hatch; classes renamed | UIR-13, UIR-12 |
-| 4 | Emoji/text/glyph icon mix (UI-8) | ⚙️ html:79, "?" html:80, ▾‹› html:22,31,33,106, inline star js:759 | One 15-symbol SVG sprite, `currentColor`, 1.5px stroke | UIR-20 |
+| 4 | Emoji/text/glyph icon mix (UI-8) | ⚙️ html:79, "?" html:80, ▾‹› html:22,31,33,106, inline star js:763, info-circle html:210 (new) | One 15-symbol SVG sprite, `currentColor`, 1.5px stroke | UIR-20 |
 | 5 | ALL-CAPS microcopy (UI-8) | CSS uppercase css:156,189,347,420,656 + literal caps html:15,39,51,76 | `.micro-label`, sentence case; strings edited | UIR-25 |
 | 6 | Version in H1 (UI-8) | `bcfeed v1.0` html:73 | H1 = "bcfeed"; version → Settings about line | UIR-10, UIR-16 |
 | 7 | Hover-lift on everything (UI-8) | `translateY(-1px)` css:83,130,565 | Removed; color/bg transitions only | UIR-7 |
 | 8 | 999px pill chrome (UI-8) | badge css:151, date-label css:498, `.pill` css:689, legend html:41,43 | 6px-radius badges; pills/date-labels deleted | UIR-5, UIR-12, UIR-13 |
-| 9 | Four blues (UI-11) | `--accent` cyan, `#64a8ff` family css:244,503,526-528 + html:52 + js:565,570, light `#1f7aff`, `rgba(64,150,210,…)` css:558-559 | One `--accent` family per theme | UIR-2 |
+| 9 | Four blues (UI-11) | `--accent` cyan, `#64a8ff` family css:244,503,526-528 + html:52 + js:568,573, light `#1f7aff`, `rgba(64,150,210,…)` css:558-559 | One `--accent` family per theme | UIR-2 |
 | 10 | Four reds (UI-11) | `#ff5f5f` css:108,534; `#ff6b6b` css:223; `#b83a3a` html:85,144; `#ffc5c5` html:85 | `--danger-*` semantic tokens; unseen state stops being red entirely | UIR-2, UIR-12 |
-| 11 | Inline-style sprawl (UI-10) | ~40 `style=""` attrs across html:13-176 | All moved to classes; spacer divs html:130,134 deleted | UIR-16, UIR-29 |
-| 12 | Raw log box as primary feedback (UI-9, UX-7) | `.calendar-log` fixed 200px css:440-459; `#64a8ff` prose js:565,570 | Activity strip + mono details + banners/toasts | UIR-22/23/24 |
+| 11 | Inline-style sprawl (UI-10) | ~60 `style=""` attrs across html:13-301 (the merge added ~25 in the IMAP panel, html:175-216) | All moved to classes | UIR-16, UIR-29, UIR-30 |
+| 12 | Raw log box as primary feedback (UI-9, UX-7) | `.calendar-log` fixed 200px css:440-459; `#64a8ff` prose js:568,573 | Activity strip + mono details + banners/toasts | UIR-22/23/24 |
 | 13 | 2%-alpha hover + specificity accident (UI-6) | css:681-683 | `var(--row-hover)` on both `:hover` selectors | UIR-12 |
 | 14 | Undefined `--header-bg` (css map §5.1) | css:64 | Defined per theme | UIR-2, UIR-10 |
 | 15 | Five letter-spacing values | css:80,101,157,187,196,341,346,392,419,430,611,656,659,701 | Zero letter-spacing | UIR-3 |
 | 16 | 10px type | css:154,429,669 | 12px minimum | UIR-3 |
 | 17 | `line-height: 1.05` descender clipping | css:211,651 | 1.35 in table, 1.45 elsewhere | UIR-3 |
-| 18 | CACHED badge shouting plumbing (UI-13) | css:146-161, js:229,767 | "Saved" `.badge`, hidden behind dev setting | UIR-12 |
+| 18 | CACHED badge shouting plumbing (UI-13) | css:146-161, js:231-232,770 | "Saved" `.badge`, hidden by default | UIR-12 |
 | 19 | Alarm-red unseen dots on 90% of rows (UI-6) | `.row-dot` `#ff5f5f` css:103-115 | 8px accent dot, 24px hit area, hollow ring when read | UIR-12 |
 | 20 | Dead CSS | `.pill` css:687-702, `.inline-link` css:52-56, `.calendar-row` css:367-373, `.calendar-day.scraped*` css:539-561, duplicate `.selected` gradient css:580-584 | Deleted (grep checklist §11) | UIR-28 |
 | 21 | Two modal generations (UI-10) | z-50/0.45 backdrop css:744-783 vs z-9999/0.75/12px css:585-605,806-826 | One `.modal` system, one backdrop, one z | UIR-16 |
@@ -461,19 +485,21 @@ grep -n 'wireframe' dashboard.css dashboard.html
 grep -n 'letter-spacing|text-transform' dashboard.css
 grep -n 'translateY' dashboard.css
 grep -n 'transition: all' dashboard.css
-grep -n 'style="' dashboard.html          # target: 0 (from ~40)
+grep -n 'style="' dashboard.html          # target: 0 (from ~60 at e363bf4)
 grep -n '64a8ff\|ff5f5f\|ff6b6b\|b83a3a\|ffc5c5' dashboard.css dashboard.html dashboard.js
+# note: #ff6b6b now also hits the appended settings block (css:1045-1052) — §6.12
 grep -n 'unseen-day\|populated-day' dashboard.js  # gone: coverage uses the new `unfetched` class (or `populated-day` if kept); `has-unseen` is a separate NEW class from the hasUnseen boolean, not a rename
+grep -n 'button primary\|button danger' dashboard.html dashboard.js   # folded into .button-primary/.button-danger (§6.12)
 ```
 
-Specific deletions: body gradients (css:33-34,41-45); all `rgba(82,208,255,…)` / `rgba(100,168,255,…)` / `rgba(255,255,255,…)` literals; glow box-shadows (css:522,528,553,559); the 15+ one-off shadows (§4.4); `.pill` (css:687-702), `.inline-link` (css:52-56), `.calendar-row` (css:367-373), `.calendar-day.scraped*` (css:539-561); the duplicate `.selected` gradient (css:580-584); duplicate thead/th sticky declarations (css:641-664); spacer divs (html:130,134); bottom status bar (html:111-113).
+Specific deletions: body gradients (css:33-34,41-45); all `rgba(82,208,255,…)` / `rgba(100,168,255,…)` / `rgba(255,255,255,…)` literals (including css:876,940 in the appended block); glow box-shadows (css:522,528,553,559); the 15+ one-off shadows (§4.4); `.pill` (css:687-702), `.inline-link` (css:52-56), `.calendar-row` (css:367-373), `.calendar-day.scraped*` (css:539-561); the duplicate `.selected` gradient (css:580-584); duplicate thead/th sticky declarations (css:641-664); the superseded first-generation `.settings-panel` rules (css:753-783 — overridden wholesale by css:841+; §6.12); bottom status bar (html:111-113).
 
 ---
 
 ## 12. HTML/JS delta summary (UIR-29, M)
 
-- **dashboard.html:** ~40 inline `style` attributes removed; icon sprite `<svg><symbol>` block added; ALL-CAPS strings sentence-cased; version moved out of H1; legend rebuilt with classes; bottom status bar removed; log box replaced by activity-strip markup.
-- **dashboard.js:** ~10 class renames/additions in template strings — row dot + badge classes in `renderTable` (js:756-769, where the JS-1 escaping fix co-lands); log-line classes replacing the hardcoded `#64a8ff` (js:565,570); calendar state classes in `renderCalendar` (js:1241-1276): the scraped-driven class (`unseen-day`, `populated-day` after WP-19/CQ-37) folds into the coverage channel (new `unfetched` on unfetched days, or keep `populated-day`), new `has-unseen` applied from the existing `hasUnseen` boolean (js:1254-1259) for the accent dot — not a rename — plus new `range-edge`; activity-strip markup; theme seeding via `matchMedia` (3 lines).
+- **dashboard.html:** ~60 inline `style` attributes removed (~25 of them in the merge-added IMAP panel, html:175-216); icon sprite `<svg><symbol>` block added; ALL-CAPS strings sentence-cased; version moved out of H1; legend rebuilt with classes; bottom status bar removed; log box replaced by activity-strip markup.
+- **dashboard.js:** ~10 class renames/additions in template strings — row dot + badge classes in `renderTable` (js:759-772, where the JS-1 escaping fix co-lands); log-line classes replacing the hardcoded `#64a8ff` (js:568,573); calendar state classes in `renderCalendar` (js:1244-1279): the scraped-driven class (`unseen-day`, `populated-day` after WP-19/CQ-37) folds into the coverage channel (new `unfetched` on unfetched days, or keep `populated-day`), new `has-unseen` applied from the existing `hasUnseen` boolean (js:1257-1262) for the accent dot — not a rename — plus new `range-edge`; activity-strip markup; theme seeding via `matchMedia` (3 lines). The provider/IMAP controller (js:1702-2093) needs no logic changes — only the class names it toggles (`.button.primary` → `.button-primary`, `.help-text` → `.hint-text`).
 - **Because the app is a full-re-render model, every visual class lives in JS template strings** — a grep pass over `dashboard.js` for class literals must precede any rename (missing one silently unstyles a state).
 - No framework, no build step, no new dependencies. All element IDs and the `body.theme-light` mechanism unchanged (zero behavior risk).
 
@@ -521,11 +547,11 @@ Specific deletions: body gradients (css:33-34,41-45); all `rgba(82,208,255,…)`
 
 ## 14. Phasing, effort, risk
 
-**Estimate: 3–4 developer-days** for the core normalization, **+1–2 days later** for the determinate-progress/toast phase that depends on the typed SSE work (ARCH-4).
+**Estimate: 3.5–4.5 developer-days** for the core normalization (raised half a day for the settings/provider surface, UIR-30), **+1–2 days later** for the determinate-progress/toast phase that depends on the typed SSE work (ARCH-4).
 
 **Two PRs (Stockbook graft):**
 
-- **PR 1 — tokens + chrome (pure visual, zero behavior).** Two commits: (a) token block + component classes in `dashboard.css`; (b) HTML de-inlining + sprite + string edits. Breakdown: `dashboard.css` effectively rewritten (839 → ~700–900 disciplined lines; cheaper than patching because roughly a third of the file is deletions — gradients, hatches, glow rings, dead rules, duplicate sticky declarations) ≈ 1.5–2 days; `dashboard.html` de-inlining ≈ 0.5 day; `dashboard.js` touch-ups (template classes, log-line classes, calendar renames, activity-strip markup) ≈ 0.5–1 day; two-theme screenshot QA against the existing shot inventory (`docs/current-state/screenshots/`) ≈ 0.5 day.
+- **PR 1 — tokens + chrome (pure visual, zero behavior).** Two commits: (a) token block + component classes in `dashboard.css`; (b) HTML de-inlining + sprite + string edits. Breakdown: `dashboard.css` effectively rewritten (1,058 → ~750–950 disciplined lines; cheaper than patching because a large share of the file is deletions — gradients, hatches, glow rings, dead rules, duplicate sticky declarations, plus the superseded first-generation settings rules and the appended block's normalization per UIR-30/§6.12) ≈ 2 days; `dashboard.html` de-inlining (~60 inline styles incl. the IMAP panel) ≈ 0.5–1 day; `dashboard.js` touch-ups (template classes, log-line classes, calendar renames, activity-strip markup, provider-controller class renames) ≈ 0.5–1 day; two-theme screenshot QA against the existing shot inventory (`docs/current-state/screenshots/`, including the post-merge settings/provider shots `20-postmerge-*`/`22b-postmerge-*`/`23-postmerge-*`) ≈ 0.5 day.
 - **PR 2 — status/log replacement completion**, sequenced with the JS-3/JS-10 single-owner populate-state fix and the ARCH-4 typed SSE protocol: determinate progress bar, "Added N releases" toast, refetch-instead-of-reload. Indeterminate bar + banner ship in PR 1 as the interim.
 
 **Risk (low-to-medium), concentrated in three places:**

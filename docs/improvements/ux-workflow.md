@@ -4,6 +4,8 @@ Scope: user-facing language, onboarding, the populate/preload/cache core loop, f
 
 Evidence base: `docs/audit` findings (UX-1..15, UI-*, JS-*, ARCH-*, PY-*, SEC-*, PERF-* as cited per item), the product map, and the screenshot set in `docs/current-state/screenshots/`.
 
+**Revalidated against `e363bf4`** (2026-07-05, IMAP-provider merge). All string locations below were re-verified against the current files: `dashboard.js` grew 1,725 → 2,113 lines (existing refs shifted +3 past line 60; a provider/IMAP settings controller was appended at js:1702-2093), the settings panel in `dashboard.html` was rebuilt (html:116-263), the credential modals moved (html:274-301), pipeline log lines are now provider-parameterized (`{Gmail|IMAP}`), and `gmail.py` refs became `gmail_client.py`. New IMAP/provider strings are mapped in the new *Email provider settings* subsection of UXP-1. UXP-5 is re-scoped (the settings redesign landed upstream); UXP-3/4 now describe both provider onboarding paths.
+
 Product brief constraints honored throughout:
 
 - **Preserve:** dense sortable table, calendar-as-coverage-map, star-triggers-preload, keyboard shortcuts, local-first privacy, the honest progress information in the SSE stream (the information is right; the primitive is wrong).
@@ -31,6 +33,8 @@ UX first principles referenced: *visibility of system status*, *match between sy
 | cache / cached / CACHED | downloaded, saved, ready (or say nothing) |
 | scrape(d) / parse / query | check(ed), search, read |
 | credentials / token | Google access file (for the JSON), Gmail connection (for auth state) |
+| provider / configuration | connection, mail settings (but `IMAP` itself is allowed — see the provider-settings subsection) |
+| keychain backend / secure storage | your Mac's Keychain (macOS user vocabulary) |
 | proxy / stream / SSE | (never user-visible) |
 | "days" as scrape units | dates / dates checked |
 
@@ -43,16 +47,16 @@ Sentence case everywhere; no ALL-CAPS microcopy (ties into the visual plan). Dat
 | Current | Location | Replacement |
 |---|---|---|
 | `Populate release list` | dashboard.html:52 | `Get releases` |
-| `Populating…` | dashboard.js:1431 | `Checking Gmail…` (with progress, UXP-2) |
-| `Release list populated` (disabled label) | dashboard.js:577 | `Up to date` + secondary `Check again` action (UXP-11) |
-| tooltip `All dates in this range are already populated` | dashboard.js:578 | `You've already fetched releases for these dates` |
+| `Populating…` | dashboard.js:1434 | `Checking mail…` (provider-neutral since e363bf4; with progress, UXP-2) |
+| `Release list populated` (disabled label) | dashboard.js:580 | `Up to date` + secondary `Check again` action (UXP-11) |
+| tooltip `All dates in this range are already populated` | dashboard.js:581 | `You've already fetched releases for these dates` |
 | `Preload release data` | dashboard.html:53 | Button removed as a primary action (UXP-8). Interim rename if kept: `Load all players` |
-| `Preloading…` | dashboard.js:1501 | `Loading players…` (with progress, UXP-9) |
-| `Release data preloaded` | dashboard.js:634 | `Players ready` |
-| tooltip `All embeds already cached for this range` | dashboard.js:635 | `All players are ready for these dates` |
-| tooltip `Fetch embed data for releases in this range` | dashboard.js:639 | `Download the player and description for each release` |
-| tooltip `Populate this range before preloading embeds` | dashboard.js:643 | `Get releases first` |
-| tooltip `Preload unavailable` | dashboard.js:647 | (state removed with UXP-8) |
+| `Preloading…` | dashboard.js:1504 | `Loading players…` (with progress, UXP-9) |
+| `Release data preloaded` | dashboard.js:637 | `Players ready` |
+| tooltip `All embeds already cached for this range` | dashboard.js:638 | `All players are ready for these dates` |
+| tooltip `Fetch embed data for releases in this range` | dashboard.js:642 | `Download the player and description for each release` |
+| tooltip `Populate this range before preloading embeds` | dashboard.js:646 | `Get releases first` |
+| tooltip `Preload unavailable` | dashboard.js:650 | (state removed with UXP-8) |
 | `Mark as seen` / `Mark as unseen` | dashboard.html:54-55 | `Mark shown as seen` / `…as unseen`, with live count (UXP-16) |
 
 *Calendar panel:*
@@ -63,9 +67,9 @@ Sentence case everywhere; no ALL-CAPS microcopy (ties into the visual plan). Dat
 | legend `Unseen` | dashboard.html:44 | `New releases` (it marks days with unplayed releases, not day state) |
 | `SHIFT-CLICK TO SELECT RANGE` | dashboard.html:39 | `Shift-click to select a range` (sentence case, quieter placement) |
 | `SELECTED DATE RANGE:` | dashboard.html:51 | `Selected dates` |
-| `Today` button (selects yesterday) | dashboard.js:1371-1387 | `Latest` (see UXP-18) |
+| `Today` button (selects yesterday) | dashboard.js:1374-1390 | `Latest` (see UXP-18) |
 
-*Status / selection messages (currently raw log text, dashboard.js:559-585):*
+*Status / selection messages (currently raw log text, dashboard.js:562-588):*
 
 | Current | Replacement |
 |---|---|
@@ -74,25 +78,30 @@ Sentence case everywhere; no ALL-CAPS microcopy (ties into the visual plan). Dat
 | `{n} of {m} selected days not yet populated.` | `Jun 1 – Jun 30 · {n} dates not checked yet` |
 | `Click "Populate release list" to populate all dates in the selected range.` | (replaced by primitive — the enabled `Get releases` button *is* the call to action; empty state carries the sentence on first run, UXP-14) |
 | `Showing all populated releases (only from previously downloaded date ranges).` | `Showing everything fetched so far` |
-| Star-then-browse tip (blue paragraph in log, dashboard.js:569-572) | Move to a dismissible one-time hint near the table: `Tip: star releases you're curious about — their players load in the background.` |
+| Star-then-browse tip (blue paragraph in log, dashboard.js:572-576) | Move to a dismissible one-time hint near the table: `Tip: star releases you're curious about — their players load in the background.` |
 
-*Fetch progress (currently raw pipeline log lines, pipeline.py:74-120, gmail.py:157):*
+*Fetch progress (currently raw pipeline log lines, pipeline.py:104-183; gmail_client.py:273; imap_provider.py:72,159; server.py:680-688). Since e363bf4 these lines are provider-parameterized — `{provider}` renders as `Gmail` or `IMAP`:*
 
 | Current | Replacement |
 |---|---|
-| `The following date ranges will be downloaded from Gmail:` + range list | (replaced by primitive — progress bar label `Checking Jun 10 – Jun 11…`) |
-| `This date range has already been scraped; no Gmail download needed.` | `These dates were already checked — nothing new to fetch.` |
-| `Querying Gmail for 2026-06-01 to 2026-07-01...` | `Searching your Gmail…` (inclusive dates only, if shown at all) |
-| `Found 214 messages for …` | `Found 214 release emails` |
-| `Downloading messages 0 to 20` | (replaced by primitive — determinate bar `Downloading 20 of 214`) |
-| `Parsing messages...` | `Reading emails…` |
-| `Checking for releases with identical URLS...` | (details view only — not user-facing) |
-| `Parsed {n} releases from Gmail for …` | `Found {n} releases` |
-| `Loaded 205 unique releases including cache.` | (replaced by primitive — completion toast `Added {new} releases · {total} in this range`, UXP-13) |
-| `No messages found for {after} to {before}` | `No release emails found for these dates.` |
-| `Maximum number of results reached. Stopping download.` | see UXP-21 |
+| `The following date ranges will be downloaded from {provider}:` + range list (pipeline.py:109-111) | (replaced by primitive — progress bar label `Checking Jun 10 – Jun 11…`) |
+| `This date range has already been scraped; no {provider} download needed.` (pipeline.py:113) | `These dates were already checked — nothing new to fetch.` |
+| `Querying {provider} for 2026-06-01 to 2026-07-01...` (pipeline.py:130) | `Searching your mail…` (inclusive dates only, if shown at all) |
+| `Found 214 messages for …` (pipeline.py:152) | `Found 214 release emails` |
+| `Downloading messages 0 to 20` (gmail_client.py:273, imap_provider.py:159) | (replaced by primitive — determinate bar `Downloading 20 of 214`) |
+| `IMAP UID search: SINCE … BEFORE …` (imap_provider.py:72) | (details view only — not user-facing) |
+| `Parsing messages...` (pipeline.py:27) | `Reading emails…` |
+| `Checking for releases with identical URLS...` (pipeline.py:82) | (details view only — not user-facing) |
+| `Warning: failed to parse one message: {exc}` / `Skipped {n} message(s) due to parse errors.` (pipeline.py:59,84 — new) | details view; aggregate only in the completion toast if `{n}` > 0: `{n} emails couldn't be read` |
+| `Warning: Failed to fetch message {id}: {e}` (imap_provider.py:167 — new) | details view only |
+| `Parsed {n} releases from {provider} for …` (pipeline.py:159) | `Found {n} releases` |
+| `Loaded 205 unique releases including cache.` / `Loaded {n} unique releases from cache.` (pipeline.py:118,180) | (replaced by primitive — completion toast `Added {new} releases · {total} in this range`, UXP-13) |
+| `No messages found for {after} to {before}` (pipeline.py:149) | `No release emails found for these dates.` |
+| `Populate completed.` (server.py:680 — new) | (replaced by primitive — completion toast, UXP-13) |
+| `Maximum results reached ({found}/{max}).` (server.py:684 — reworded in the merge; the client still substring-matches `"Maximum results"`, dashboard.js:1468) | see UXP-21 |
+| `ERROR: Authentication failed: {exc}` / `ERROR: Unexpected error: {exc}` (pipeline.py:164, server.py:688 — new) | banner primitive, UXP-19 (typed error event, ARCH-4) |
 
-*Preload / player loading (dashboard.js:1490-1540):*
+*Preload / player loading (dashboard.js:1493-1543):*
 
 | Current | Replacement |
 |---|---|
@@ -103,35 +112,64 @@ Sentence case everywhere; no ALL-CAPS microcopy (ties into the visual plan). Dat
 | `Preload complete. Cached: 8/12, failed: 4.` | `Players loaded for 8 of 12 releases. 4 couldn't be loaded.` |
 | `CACHED` badge | Removed from default UI (UI-13); dev toggle label `Show cached badges` → `Show 'player ready' tags` |
 
-*Connection / credentials (dashboard.html:154-180, dashboard.js:300-365, server.py:578-583, gmail.py:110-114):*
+*Connection / credentials (dashboard.html:274-301, dashboard.js:303-368, server.py:568-622 & 650-660, gmail_client.py, credential_store.py):*
 
 | Current | Replacement |
 |---|---|
-| modal title `Credentials Needed` | `Connect your Gmail` |
-| `Gmail token missing. Load credentials in the Settings panel to continue.` | `bcfeed isn't connected to your Gmail yet. It needs a one-time setup to read your Bandcamp notification emails.` + button `Set up now` (UXP-4) |
-| modal title `Load Credentials` | `Connect Gmail` |
-| `You will be prompted to load your "client_secret_XXXXXXX.json" credentials file.` | `Choose the Google access file you downloaded (it's named client_secret_….json).` |
-| `This must downloaded from Google Cloud.` (typo) | folded into the sentence above |
-| `Show setup instructions` (plain-text link) | `How do I get this file?` styled as a visible link/button (UI-15) |
-| button `Load credentials` | `Connect Gmail…` |
-| button `Clear credentials` (deletes the token) | `Disconnect Gmail` |
-| link `Revoke Gmail authorization (external link)` | `Remove bcfeed's access in your Google account ↗` |
-| `Credentials loaded.` / `Credentials loaded and authenticated.` | toast `Gmail connected` |
-| `Credentials reloaded.` / `Removed saved Gmail token.` | toast `Gmail disconnected` |
-| `Failed to load credentials.` | banner `Couldn't connect Gmail.` + specific reason + retry (UXP-19) |
-| `Credentials not found. Reload credentials in the settings panel.` | banner `bcfeed can't find your Google access file.` + button `Open Settings` |
-| `Gmail token missing. Reload credentials in the settings panel to re-authenticate.` | banner `Gmail isn't connected.` + button `Connect Gmail` |
-| `Gmail refresh failed: {exc}` | `Your Google sign-in expired. Reconnect Gmail to continue.` + button |
-| `Could not find credentials.json. Reload credentials file in the settings panel to regenerate it.` (gmail.py:114) | same as "can't find your Google access file" above |
-| `…Try reducing batch size using argument --batch.` (gmail.py:169 — flag doesn't exist) | `Gmail is rate-limiting requests. Wait a minute and try again.` (backend retry per PY-9 makes this rare) |
+| modal title `Credentials Needed` (html:277) | `Connect your email` |
+| `Email credentials not configured. Configure your provider settings in the Settings panel to continue.` (html:280 — reworded provider-neutral in the merge) | `bcfeed isn't connected to your email yet. It needs a one-time setup to read your Bandcamp notification emails.` + button `Set up now` (UXP-3/4 — opens the provider choice) |
+| modal title `Load Credentials` (html:289) | `Connect Gmail` |
+| `You will be prompted to load your "client_secret_XXXXXXX.json" credentials file.` (html:292) | `Choose the Google access file you downloaded (it's named client_secret_….json).` |
+| `The sensitive contents are stored securely in your system keychain.` (html:293 — new) | `bcfeed keeps this file in your Mac's Keychain — it never sits in a plain file.` (reassurance stays; "system keychain" is acceptable macOS vocabulary) |
+| `This must be downloaded from Google Cloud.` (html:294 — the typo was fixed upstream) | folded into the "Choose the Google access file" sentence |
+| `Show setup instructions` (plain-text link, html:296) | `How do I get this file?` styled as a visible link/button (UI-15) |
+| button `Load credentials file` (html:158 — renamed in the merge) | `Connect Gmail…` |
+| button `Clear credentials` (html:159 — deletes token + client config) | `Disconnect Gmail` |
+| `Revoke Gmail Authorization` (html:164 — now a danger-styled button) + help text `Revokes access on Google's side. To remove local tokens, use "Clear credentials".` (html:165) | `Remove bcfeed's access in your Google account ↗`; help text: `This removes access on Google's side. To disconnect inside bcfeed, use Disconnect Gmail.` |
+| `Credentials loaded.` / `Credentials loaded and authenticated.` (dashboard.js:357-359) / `Credentials uploaded and authenticated.` (server.py:610) | toast `Gmail connected` |
+| `Saved Gmail credentials to secure storage. Authenticating…` (server.py:608 — new) | waiting-state copy, UXP-4: `Waiting for you to finish signing in with Google…` |
+| `Credentials reloaded.` (dashboard.js:322) / `Credentials cleared.` (server.py:580) | toast `Gmail disconnected` |
+| `Failed to load credentials.` (dashboard.js:326,352) | banner `Couldn't connect Gmail.` + specific reason + retry (UXP-19) |
+| `Gmail credentials not found. Reload credentials in the settings panel.` (server.py:654) | banner `bcfeed can't find your Google access file.` + button `Open Settings` |
+| `Gmail token missing. Reload credentials in the settings panel to re-authenticate.` (server.py:656) | banner `Gmail isn't connected.` + button `Connect Gmail` |
+| `IMAP credentials not configured. Please configure IMAP settings (host, username, password, folder) in the settings panel.` (server.py:660 — new) | banner `Your mail connection isn't set up.` + button `Open Settings` |
+| `Gmail refresh failed: {exc}` (gmail_client.py:231) | `Your Google sign-in expired. Reconnect Gmail to continue.` + button |
+| `Gmail access was revoked or expired. Reload credentials in the settings panel to re-authorize.` (gmail_client.py:228) | same as above |
+| `Stored Gmail token is invalid…` / `Saved Gmail token is unreadable…` / `Stored Gmail credentials are invalid…` (gmail_client.py:113,144,155 — new) | banner `Gmail isn't connected.` + button `Connect Gmail` (detail to the log disclosure) |
+| `Could not find credentials.json. Reload credentials file in the settings panel to regenerate it.` (gmail_client.py:160) | same as "can't find your Google access file" above |
+| `System keychain access is unavailable. Configure a supported keychain backend and try again.` (credential_store.py:32 — new) | `bcfeed couldn't reach your Mac's Keychain. Restart bcfeed and try again.` (the "configure a backend" advice is developer-speak) |
+| `…Try reducing batch size using argument --batch.` (gmail_client.py:285 — flag still doesn't exist) | `Gmail is rate-limiting requests. Wait a minute and try again.` (backend retry per PY-9 makes this rare) |
 
-*Settings (dashboard.html:116-147):*
+*Settings (dashboard.html:116-263 — panel rebuilt in the merge; see UXP-5 for the structural re-scope):*
 
 | Current | Replacement |
 |---|---|
-| `Clear cache` | `Delete downloaded data…` (confirmation + split per UXP-7) |
-| `Credentials:` group label | `Gmail connection` |
-| `Show cached badges` | `Show 'player ready' tags` (stays dev-only) |
+| `Clear cache & reset database` (html:260 — renamed in the merge) + `Clear all cached release data, images, and viewing history. Your settings and credentials will be preserved.` (html:256-257) | `Delete downloaded data…` (confirmation + stars/history split per UXP-7 — the new description is more honest but the action is still one-click and still deletes stars) |
+| section `Email Configuration` (html:142) | `Email connection` |
+| `Dark mode` toggle (html:131 — the theme toggle is now a visible setting, resolving part of UXP-5) | keep; default should follow `prefers-color-scheme` |
+| `Show cached badges` (html:135 — now a visible Appearance setting, default on) | `Show 'player ready' tags`; return it to default-off/dev-only per UI-13 |
+
+*Email provider settings (new surface at e363bf4 — dashboard.html:141-248, dashboard.js:1702-2093, server.py:717-817). Most of this copy is already plain-language and inline (status text sits next to the button that caused it — the UXP-2 pattern); the map below lists only the strings needing changes:*
+
+| Current | Replacement |
+|---|---|
+| `Provider` label + options `Gmail API (OAuth)` / `IMAP` (html:145-149) | `How bcfeed reads your email` + `Google sign-in (Gmail only)` / `Mail server (IMAP — most providers)` |
+| `Connect using the official Google API. Requires a client_secret.json file.` (html:154-156) | `Sign in with Google. You'll need a one-time Google access file (about 20 minutes to set up).` |
+| `Folder To Scan` (html:225 — title case) | `Folder to scan` (sentence case, UIR-25) |
+| `Save IMAP Configuration` (html:245 — title case) | `Save mail settings` |
+| `Manual Folder Name` (html:237 — title case) | `Folder name` |
+| `Connect & load folders` / `Reload folders` / `Connecting…` (dashboard.js:1724-1725, js status) | keep — already plain |
+| `Connection verified. Review the folder selection, then save.` (js) | keep |
+| `A recommended folder has been preselected. Review it, then save the configuration.` (js) | `We've picked the folder that looks right. Check it, then save.` |
+| `Enter the IMAP server and username before loading folders.` / `Enter your IMAP password before loading folders.` (js) | keep — plain and actionable |
+| `IMAP configuration saved.` (js) | `Mail settings saved.` |
+| `Load folders and save the IMAP configuration to switch providers.` (js) | `Load folders and save your mail settings to finish switching.` |
+| `Connection details changed. Reload folders before saving.` (js) | keep |
+| password tooltip `Some providers require an app-specific password for IMAP access. Check your provider's documentation.` (html:209) | keep, but surface as visible `.help-text` rather than a hover-only `title` (hover tooltips are invisible on the field the user is stuck on) |
+| `IMAP host is required.` / `IMAP username is required.` / `IMAP password is required.` / `Choose an IMAP folder to scan before saving.` / `Enter your IMAP password to load folders.` (server.py:728-733,794-801) | keep — field-level and actionable; render inline next to the field, not as a generic banner |
+| `Failed to load IMAP folders: {exc}` (server.py:752) | `Couldn't connect to your mail server.` + reason + `Try again` (UXP-19 banner anatomy, inline in the panel) |
+
+Vocabulary note: `IMAP` itself is **allowed** — it is the term the user's mail provider uses in its own settings and docs, so hiding it would hurt recognition. `Provider`, `configuration`, and `credentials` remain banned in favor of `connection` / `settings` / `access file`.
 
 *Modals / system errors:*
 
@@ -148,7 +186,7 @@ Sentence case everywhere; no ALL-CAPS microcopy (ties into the visual plan). Dat
 
 **Acceptance criteria.**
 
-- Grep of `dashboard.html`, `dashboard.js`, `pipeline.py`, `gmail.py`, `server.py` for user-visible strings finds zero instances of the banned terms in any string a user can see (code identifiers may keep internal names).
+- Grep of `dashboard.html`, `dashboard.js`, `pipeline.py`, `gmail_client.py`, `gmail_provider.py`, `imap_client.py`, `imap_provider.py`, `provider_factory.py`, `credential_store.py`, `server.py` for user-visible strings finds zero instances of the banned terms in any string a user can see (code identifiers may keep internal names).
 - All date ranges shown to the user are inclusive and match the calendar selection exactly.
 - Every disabled control's tooltip states, in plain language, *why* it is disabled and *what would enable it*.
 - The docs (README/SETUP) are updated in the same pass so UI names and doc names match (the docs have drifted before — commit bdc1b4a).
@@ -198,32 +236,40 @@ The raw log does not disappear: it becomes a collapsed **"Details"** disclosure 
 
 ### UXP-3 — Replace the Credentials-modal→Settings dump with a guided first-run checklist
 
-**Rationale.** First value is ~15 manual steps away, and the in-app funnel currently ends in a flat Settings panel of four mostly-destructive buttons, with the setup guide buried one modal deeper (UX-1). The constraint is real and stays: users must self-provision a Google OAuth client (privacy-by-user-owned-credentials is a core product principle). Given that, the design job is *sequencing and expectation-setting*: a checklist externalizes progress (*recognition over recall*), makes the 20–30 minute Google gauntlet feel bounded, and keeps the user away from destructive controls on day one (*error prevention*).
+**Re-scoped at e363bf4:** the first-run funnel now **branches by provider**. The merge added an IMAP path (settings → Email Configuration → IMAP) that is radically shorter than the Gmail path — host/username/password/folder, with automatic folder discovery and a recommended folder preselected (`/imap/discover`, server.py:717-752) — no Google Cloud project, no OAuth consent hop. The modal itself went provider-neutral (`Email credentials not configured…`, html:280) but the funnel shape is unchanged: modal → dismiss → auto-open Settings (dashboard.js:1029-1035) → a settings panel that now at least has labeled sections, but still no sequencing, time expectations, or progress state.
+
+**Rationale.** First value on the Gmail path is ~15 manual steps away; on the new IMAP path it is ~4 fields away, *provided* the user knows to create an app-specific password (the one trap on that path — currently explained only in a hover tooltip, html:209). The in-app funnel still ends in a flat settings panel with the setup guides buried behind links (UX-1). The Gmail constraint is real and stays: users must self-provision a Google OAuth client (privacy-by-user-owned-credentials is a core product principle). Given that, the design job is *choice framing, sequencing, and expectation-setting*: present the two paths with honest costs, then a checklist that externalizes progress (*recognition over recall*), makes the chosen gauntlet feel bounded, and keeps the user away from destructive controls on day one (*error prevention*).
 
 **Design.**
 
-- On launch with no Gmail connection, the **main content area** (not a modal) shows a first-run panel:
-  1. **Get your Google access file** — `~20 minutes, one time only. Google requires this so that only you can read your own email.` Button: `Open the step-by-step guide` (existing `/setup-gmail` docs, opened in-app). Sub-hint: `You'll finish with a file named client_secret_….json`.
-  2. **Connect it to bcfeed** — button `Choose file…` (the existing upload). Disabled until step 1 is acknowledged is *not* required — steps are numbered, not gated, so returning users can jump straight to 2.
+- On launch with no email connection, the **main content area** (not a modal) shows a first-run panel, step 1 of which is the provider choice:
+  1. **Choose how bcfeed reads your email** — two cards:
+     - `Mail server (IMAP)` — `~5 minutes. Works with most providers. You may need an app-specific password — we'll show you how.` (recommended default for non-Gmail users; honest hint that Gmail-via-IMAP also needs an app password)
+     - `Google sign-in (Gmail API)` — `~20 minutes, one time only. Google requires this so that only you can read your own email.` Button: `Open the step-by-step guide` (existing `/setup-gmail` docs; the IMAP card links `/setup-imap`). Sub-hint: `You'll finish with a file named client_secret_….json`.
+  2. **Connect it to bcfeed** — Gmail: button `Choose file…` (the existing upload). IMAP: the four connection fields + `Connect & load folders` + folder confirmation (reuse the shipped panel, re-hosted in the checklist). Steps are numbered, not gated — returning users can jump straight to 2.
   3. **Get your first releases** — `Pick dates on the calendar, then press Get releases.` Optionally a one-click starter: `Check the last 30 days`.
-- Step state is detected, not stored: step 2 shows ✓ when a token exists; step 3 shows ✓ when any release data exists. The panel disappears once step 3 completes and never returns (re-reachable from Settings → `Set up Gmail again`).
-- The current `Credentials Needed` modal is deleted; the current auto-open-Settings-on-dismiss behavior (dashboard.js:1026-1031) is deleted.
+- Step state is detected, not stored: step 2 shows ✓ when a Gmail token or a saved-and-verified IMAP config exists (`/provider-config` GET already reports both — `has_gmail_credentials`, `has_password`); step 3 shows ✓ when any release data exists. The panel disappears once step 3 completes and never returns (re-reachable from Settings → `Set up email again`).
+- The current `Credentials Needed` modal is deleted; the current auto-open-Settings-on-dismiss behavior (dashboard.js:1029-1035) is deleted.
 - The calendar/sidebar remain visible but visually quieted behind the checklist so the user sees where they will land.
 
 **Acceptance criteria.**
 
 - A fresh install (no data dir) boots directly into the checklist; no modal appears.
+- Both provider paths are visible with an honest time estimate before the user commits to either; switching paths mid-setup loses nothing.
+- The IMAP app-password requirement is stated on the checklist card (visible text, not a hover tooltip).
 - Each step has a single primary action; no destructive action is reachable in fewer than 2 clicks from the checklist.
-- Killing the app mid-setup and relaunching restores the correct step from detected state (file present / token present / data present).
-- Completing step 2 advances the checklist without a page reload.
-- The `/setup-gmail` guide opens from step 1 in one click.
-- Usability check: a test user who has never seen the app can state, from the checklist screen alone, what they must do next and roughly how long it takes.
+- Killing the app mid-setup and relaunching restores the correct step from detected state (client config / token / IMAP config / data present).
+- Completing step 2 (either path) advances the checklist without a page reload.
+- The `/setup-gmail` and `/setup-imap` guides each open from step 1 in one click.
+- Usability check: a test user who has never seen the app can state, from the checklist screen alone, which path they'd pick, what they must do next, and roughly how long it takes.
 
 **Size:** L.
 
 ---
 
-### UXP-4 — Announce and supervise the OAuth consent hop
+### UXP-4 — Announce and supervise the OAuth consent hop (Gmail path only)
+
+**Scope note (e363bf4):** this item applies only to the Gmail API path — the new IMAP path has no consent hop at all (its verification is a bounded server-side connection check with inline status text, already the right shape). Verified still present: `/load-credentials` still runs the full interactive OAuth flow synchronously on the request thread (server.py:609 → `flow.run_local_server`, gmail_client.py:235, no timeout), and the upload still opens the consent tab unannounced.
 
 **Rationale.** Uploading the Google file synchronously triggers a *separate browser tab* running Google consent — including the "Google hasn't verified this app" interstitial — while the dashboard's button spins forever if the user misses or abandons the tab (UX-2, SEC-6, JS-9). This is the single most fragile onboarding step and it is completely unannounced. *Visibility of system status* and *help users recover*: the UI must say what is about to happen, show that it is waiting, and offer a way out.
 
@@ -250,23 +296,25 @@ The raw log does not disappear: it becomes a collapsed **"Details"** disclosure 
 
 ### UXP-5 — Reorganize Settings: connection status first, preferences next, destructive actions last and separated
 
-**Rationale.** The shipped Settings panel contains exactly four buttons, three destructive or plumbing-related, in arbitrary order (UX-1, low-severity "Settings contains nothing but destructive actions"). A settings surface should answer "what is my current state?" before offering to change it (*visibility of system status*), and destructive actions should be physically and visually separated (*error prevention*).
+**Re-scoped at e363bf4 — largely delivered upstream.** The merge rebuilt the settings panel (html:116-267) into labeled sections in nearly the order this item specified: **Appearance** (Dark mode toggle — now exposed, resolving the hidden-theme half of this item — plus Show cached badges), **Email Configuration** (provider select, per-provider panels, revoke isolated with explanatory help text), and **Data & Storage** last with descriptive copy. What this item still owes:
 
-**Design.**
+**Remaining design.**
 
-- **Gmail** section: status line first — `Connected` / `Not connected` (token presence). Actions: `Connect Gmail…` / `Disconnect Gmail`, plus the external `Remove bcfeed's access in your Google account ↗` link.
-- **Preferences** section: theme toggle (currently hidden behind dev settings and force-locked to dark — expose it; it works, per the low-severity theme finding), plus any future prefs.
-- **Data** section (danger zone, visually separated, red-outlined per the settings modal's existing destructive pattern): `Delete downloaded data…` (see UXP-7).
-- About line: version string moves here from the H1 (UI-8).
+- **Connection status line first**: the Email Configuration section shows forms, not state — add `Connected` / `Not connected` at the top of the section (the backend already reports it: `/provider-config` GET returns `has_gmail_credentials` and `imap_config.has_password`; today the only state signal is the IMAP password field's `••••••••` placeholder).
+- **Destructive-action confirmation**: `Clear cache & reset database` (html:260) is still one click with no confirmation and still deletes stars/seen-history (performReset hardcodes all three flags, dashboard.js:1047-1049) — UXP-7 applies unchanged; rename per the wording map.
+- **Danger-zone styling**: the Data & Storage section is separated but not visually marked destructive; the new `.button.danger` class exists (css:1044-1052) but isn't applied to the reset button — pair with the visual plan's normalization (UIR-30).
+- **About line**: version string still lives in the H1 (html:73); move it here (UI-8).
+- **Theme default**: the Dark mode toggle works but should seed from `prefers-color-scheme` (visual plan §3).
 
 **Acceptance criteria.**
 
-- Settings opens showing connection state without any action taken.
+- Settings opens showing connection state (per provider) without any action taken.
 - Destructive actions are in a visually distinct final section and all require confirmation (UXP-7).
-- The theme toggle is visible to end users and respects `prefers-color-scheme` by default. (If the visual plan declares dark-only for v1, this criterion becomes: no dead theme knob exists anywhere.)
+- The theme toggle respects `prefers-color-scheme` by default.
+- The version string appears in Settings and nowhere else.
 - First-run users following the checklist never need to open Settings at all.
 
-**Size:** M.
+**Size:** S–M (down from M — the structural reorganization shipped upstream).
 
 ---
 
@@ -287,7 +335,7 @@ The raw log does not disappear: it becomes a collapsed **"Details"** disclosure 
 
 ### UXP-7 — Destructive-action safety: confirm, enumerate, and split "Clear cache"
 
-**Rationale.** One unconfirmed click on `Clear cache` currently deletes downloaded releases *and* the user's stars and seen-history — the only state they personally created (UX-4; performReset hardcodes all three flags, dashboard.js:1044-1046). The label promises less than it destroys. *Error prevention* demands confirmation proportional to irreversibility, and honest labels.
+**Rationale.** One unconfirmed click on `Clear cache & reset database` (renamed in the merge, with a description that now at least admits "viewing history" is included — html:256-260) still deletes downloaded releases *and* the user's stars and seen-history — the only state they personally created (UX-4; performReset still hardcodes all three flags, dashboard.js:1047-1049). The label promises less than it destroys. *Error prevention* demands confirmation proportional to irreversibility, and honest labels.
 
 **Design.**
 
@@ -364,7 +412,7 @@ The raw log does not disappear: it becomes a collapsed **"Details"** disclosure 
 **Rationale (decision record).** The obvious simplification — fetch automatically whenever the selection includes unchecked dates — was evaluated against first principles and rejected:
 
 - *User control and freedom:* calendar selection is exploratory (users click around to browse ranges they already fetched); auto-fetch would fire multi-second Gmail searches — and consume the 2000-result quota — as a side effect of looking. A misclick on a year boundary triggers a monster fetch with a modal failure (UXP-21).
-- *Be polite to upstream* (product principle 5): implicit actions multiply network work; the single populate lock (server.py:582) would also serialize surprise runs behind each other, making the calendar feel broken.
+- *Be polite to upstream* (product principle 5): implicit actions multiply network work; the single populate lock (server.py:662) would also serialize surprise runs behind each other, making the calendar feel broken.
 - *Calm utility brief:* a tool that starts network activity uninvited is not calm. Gmail's OAuth consent makes "reads your email when you ask" vs "reads your email whenever" a trust-relevant distinction.
 
 **What we do instead:** make the explicit action zero-friction and impossible to miss — the range summary line (UXP-2) doubles as the affordance: `3 dates not checked · **Get releases**`; the button is always enabled for such ranges, and the one-click starter (UXP-6) covers first run. Revisit auto-fetch only if telemetry-free user feedback shows people still stall here (a future opt-in `Check automatically when I select dates` preference is the compatible path).
@@ -636,4 +684,4 @@ Recommended order (UX perspective only; correctness fixes ARCH-1/2/3, PY-2/3, SE
 | 4 — core loop | UXP-8, UXP-9, UXP-11, UXP-10 | Needs cache-first `/embed-meta` + negative cache (PERF-2), re-check endpoint |
 | 5 — table & calendar flows | UXP-14, UXP-15, UXP-16, UXP-17 | Needs batch seen endpoint (PERF-1); calendar work pairs with the visual plan |
 
-Backend enablers referenced: ARCH-2 (persist-before-mark), ARCH-3/PY-2 (error event, no false `done`), ARCH-4 (typed SSE `{log, progress, error, complete}` with `new_count` and error codes), PERF-1 (batch viewed endpoint), PERF-2/JS-6 (cache-first embed endpoint, negative cache, in-flight dedupe), PERF-7 (early pagination stop), PY-13 (reset-flag split), SEC-6/ARCH-8 (async OAuth with timeout), plus a small clear-checked-status-for-range endpoint for UXP-11.
+Backend enablers referenced: ARCH-2 (persist-before-mark — still needed at e363bf4; the rewritten pipeline still marks scraped per range but persists releases only at the end), ARCH-3/PY-2 (error event, no false `done` — *partially* mitigated upstream: the populate worker now catches all exceptions and emits `ERROR:` prose, server.py:681-690, but the stream still terminates `event: done` on failure), ARCH-4 (typed SSE `{log, progress, error, complete}` with `new_count` and error codes), PERF-1 (batch viewed endpoint), PERF-2/JS-6 (cache-first embed endpoint, negative cache, in-flight dedupe), PERF-7 (early pagination stop), PY-13 (reset-flag split), SEC-6/ARCH-8 (async OAuth with timeout — Gmail path only; the IMAP path already validates without blocking on human interaction), plus a small clear-checked-status-for-range endpoint for UXP-11.

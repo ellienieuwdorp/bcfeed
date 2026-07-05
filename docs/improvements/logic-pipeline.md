@@ -4,6 +4,28 @@ Scope: refresh semantics, Gmail→release pipeline, Bandcamp enrichment, identit
 
 Sizes: **S** ≤ half a day, **M** ≤ 2 days, **L** > 2 days. Every item has a stable ID (`LOG-n`); do not renumber — retire IDs instead.
 
+> **Re-baselined to `e363bf4` (2026-07-05).** The original audit cited `598a9dd`. The IMAP-provider PR
+> (#1) since merged and reshapes this plan:
+> - **The email pipeline is now provider-abstracted.** `gmail.py` split into `gmail_client.py`
+>   (transport) + `gmail_provider.py` (adapter); a second provider (`imap_client.py` +
+>   `imap_provider.py`) exists; both are constructed through `provider_factory.create_provider()` and
+>   yield a common `EmailMessage` (`email_provider.py`). `pipeline.py` now talks to the
+>   `EmailProvider`/`SearchQuery` interface, not Gmail directly. **Every parse/search/robustness item
+>   below now applies per-provider** — call this out where it changes the fix shape.
+> - **Parsing heuristics extracted** to `bandcamp_email_parser.py` (`parse_release_email`). This is the
+>   new home for LOG-14/LOG-15/LOG-18/LOG-19 parse work; `gmail.py:NNN` parse refs re-point here.
+> - **Date bucketing moved into the providers** (`gmail_provider`/`imap_provider` set
+>   `EmailMessage.date` as a `YYYY-MM-DD` string via `parsedate_to_datetime(...).strftime`), so LOG-12's
+>   one-line fix is now *two* call sites (imap_provider.py:198-199 and the Gmail transport) behind the
+>   interface — see LOG-12.
+> - **Resolved by the merge:** the empty/no-HTML-body crash (LOG-18 core) and null-URL junk rows
+>   (LOG-8 at construction) — see those items for what remains.
+> - **IMAP search is less reliable than Gmail's**, so the merge already added a stricter subject gate
+>   in the parser (commit `28cec44`); this reframes LOG-14 (see below).
+>
+> Items untouched by the merge keep their IDs and stay live. New-code findings are added as §7
+> (LOG-22+).
+
 ## Invariants (design ground rules)
 
 These are the first principles every item below must respect. They generalize what the app already believes.
@@ -22,9 +44,20 @@ Today, once a day is in `scrape_status.json`, it is never queried again (`cached
 
 ### LOG-1 — Persist per range, mark scraped last (S)
 
-**Problem.** `populate_release_cache` marks each range scraped immediately after download (pipeline.py:114) but persists releases once, at the very end (pipeline.py:123). Any exception in between — and the parse stage has known crashers (PY-3, PY-7) — permanently loses those days (ARCH-2/PY-1, rated highest-severity in the audit).
+**Problem. STILL PRESENT at `e363bf4`** (the merge did not fix the ordering). `populate_release_cache`
+now marks each range scraped *inside* the loop, right after extending the in-memory list
+(`mark_date_range_scraped`, pipeline.py:162) but still persists releases *once, at the very end*
+(`persist_release_metadata`, pipeline.py:183). So the ledger is written before the data is durable —
+any exception between line 162 and 183 (or a crash/kill) marks the range scraped with its releases
+never persisted. The merge *reduced* the pre-persist crash surface (LOG-18 fixed the no-HTML/empty
+crashers) but did **not** close the ordering hole itself. Still ARCH-2/PY-1, still highest-severity.
 
-**Change.** Inside the per-range loop: `persist_release_metadata(new_releases)` first, then `mark_date_range_scraped(...)`. Make this ordering an explicit invariant (I2) with a comment; the empty-range path already does it correctly (`persist_empty_date_range` persists and marks together, pipeline.py:102).
+**Change.** Inside the per-range loop: `persist_release_metadata(<this range's new releases>)` first,
+then `mark_date_range_scraped(...)` as the last step. Make this ordering an explicit invariant (I2)
+with a comment; the empty-range path already does it correctly (`persist_empty_date_range` persists and
+marks together, pipeline.py:150). Note the current code accumulates into a single `releases` list and
+persists the whole thing at the end (pipeline.py:160, 183) — to persist per-range you must persist the
+range's `new_releases` slice before its `mark_date_range_scraped`, not defer to the tail call.
 
 **Acceptance criteria.**
 - Kill the process (or raise) after range 1 of a 3-range populate: range 1's releases are in `release_cache.json` and its days marked scraped; ranges 2-3 remain unscraped and are re-fetched next run.
@@ -85,6 +118,13 @@ Enrichment is currently: frontend loops serially over releases, calling `/embed-
 
 ### LOG-5 — Cache-first `/embed-meta` with negative caching (S)
 
+**Status at `e363bf4`: STILL PRESENT.** `/embed-meta` still fetches bandcamp.com unconditionally
+(server.py:479-511) and only *writes* the cache via `_save_embed_metadata` (server.py:508); it never
+reads `_load_embed_cache()` before fetching, and records no negative/failure entries. The
+`ast.literal_eval` fallback in `extract_bc_meta` (bandcamp.py:20) is still uncaught at the call site
+(server.py:497 is outside the `requests.get` try). The fetch-failure path did improve — it now returns
+a JSON 502 instead of leaking to Flask (server.py:491) — but still embeds the raw exception string.
+
 **Rationale.** A cache written but never read is not a cache. And failures must be recorded: the audit verified the "refetch forever" population is failed fetches (404/deleted pages, missing `bc-page-properties`) — every render of a starred row refires them.
 
 **Change.**
@@ -144,9 +184,24 @@ Enrichment is currently: frontend loops serially over releases, calling `/embed-
 
 ### LOG-8 — A release without a URL is not a release (S)
 
-**Rationale.** URL is the primary key for dedupe, stars, seen-state, and enrichment (I4). Yet the pipeline caches null-URL rows: when `scrape_info_from_email` returns all-None (no release link, or subject gate rejected a "Re:" reply), the separately-parsed `date` defeats the all-None guard (pipeline.py:38, PY-5), producing unusable rows that can never be starred, seen, or enriched, and that `dedupe_by_url` keeps unconditionally (util.py:59-64).
+**Status at `e363bf4`: the producer half is RESOLVED.** `construct_release_list` now gates on
+`if not release_url: skipped += 1; continue` (pipeline.py:63-65), and `parse_release_email` returns the
+None-tuple when no `/album/`|`/track/` link is found (bandcamp_email_parser.py:52-53). Null-URL rows are
+no longer produced. **What remains for this item:** (1) the `without_url` passthrough is still present in
+`dedupe_by_date` (util.py:74-79, 94) and the null-skip in `dedupe_by_url` (util.py:59-64) — now
+defensive-only; remove or convert to assert/log once you're confident nothing upstream emits them; (2)
+the **one-time cache sweep** to drop pre-existing null-URL rows from `release_cache.json` (see Migration);
+(3) the dead all-None guard `if not all(x is None for x in [...])` at pipeline.py:67 (now always true —
+`release_url` is guaranteed truthy above it) should be deleted (also noted as CQ-13 residue / CQ-33).
 
-**Change.** Gate on `release_url is not None` in `construct_release_list`; count and log skips (`"Skipped 3 emails with no release link"` — feeds the typed progress events). Remove the `without_url` passthrough in `dedupe_by_date`/`dedupe_by_url` once the producer is fixed (they should never see one; assert/log if they do).
+**Rationale.** URL is the primary key for dedupe, stars, seen-state, and enrichment (I4). The pre-merge
+producer caches null-URL rows: when the parser returned all-None (no release link, or subject gate
+rejected a "Re:" reply), the separately-parsed `date` defeated the all-None guard (PY-5), producing
+unusable rows that can never be starred, seen, or enriched.
+
+**Change.** Producer gate — **done**. Remaining: remove the `without_url` passthrough in
+`dedupe_by_date`/`dedupe_by_url` (they should never see one now; assert/log if they do), and run the
+migration sweep.
 
 **Acceptance criteria.**
 - A fixture email with no `/album/`/`/track/` link produces zero cached rows and one counted skip line.
@@ -156,7 +211,7 @@ Enrichment is currently: frontend loops serially over releases, calling `/embed-
 
 ### LOG-9 — Canonical URL normalization across all URL-keyed stores (M)
 
-**Rationale.** Identity must be stable across representations. Today the key is "first matching href, args+fragment stripped" (gmail.py:225-235). `http://` vs `https://`, host case, and trailing slashes each fork identity: the same release starred under one form and re-fetched under another silently loses its star and re-enriches. Gmail link formats have changed before and will again.
+**Rationale.** Identity must be stable across representations. Today the key is "first matching href, args+fragment stripped" (bandcamp_email_parser.py:41-48). `http://` vs `https://`, host case, and trailing slashes each fork identity: the same release starred under one form and re-fetched under another silently loses its star and re-enriches. Gmail link formats have changed before and will again.
 
 **Change.** One `canonical_release_url(url)` in util.py: lowercase scheme+host, force https, strip query/fragment (already done), strip trailing slash, preserve path case (Bandcamp slugs are case-sensitive in principle; lowercase only the authority). Apply at parse time and at every store lookup (viewed, starred, embed cache, `/embed-meta` param).
 
@@ -169,10 +224,24 @@ Enrichment is currently: frontend loops serially over releases, calling `/embed-
 
 ### LOG-10 — Codify dedupe tie-breaking and `is_track` precedence (S)
 
-**Rationale.** `dedupe_by_date(keep="last")` (pipeline.py:117, util.py:68-95) is correct but undocumented, and it crashes on a malformed cached date (util.py:81 → bricks every populate touching that day, PY-7). The rationale worth writing down: the same URL can arrive on multiple dates (announcement email, then release email; or re-sends); *keep=last* means the row lands on the most recent notification date — closest to actual availability, and it converges regardless of the order cached+new lists are combined (`>=` makes later-processed equal-date entries win deterministically). `is_track` has two sources: URL path heuristic at parse time (gmail.py:241-242) and Bandcamp's own `item_type` via the embed overlay (server.py:435, 309) — precedence is currently implicit.
+**Rationale.** `dedupe_by_date(keep="last")` (util.py:68-95, called at pipeline.py:115 and 177) is
+correct but undocumented, and **it still crashes on a malformed cached date (util.py:81 → bricks every
+populate touching that day, PY-7 — STILL PRESENT at `e363bf4`).** Note the merge *added* an `allow_none`
+parameter to `parse_date` (util.py:6-30) but `dedupe_by_date` still calls `parse_date(item.get("date"))`
+*without* it (util.py:81), so the crash path is unchanged — the fix is now "flip the call site to use
+the parameter that already exists." The rationale worth writing down: the same URL can arrive on multiple
+dates (announcement email, then release email; or re-sends); *keep=last* means the row lands on the most
+recent notification date — closest to actual availability, and it converges regardless of the order
+cached+new lists are combined (`>=` makes later-processed equal-date entries win deterministically).
+`is_track` has two sources: URL path heuristic at parse time (`bandcamp_email_parser.py:56-57`,
+`"/track/" in release_path`) and Bandcamp's own `item_type` via the embed overlay (server.py:496, plus
+the read-time overlay) — precedence is currently implicit.
 
 **Change.**
-- `dedupe_by_date`: use `parse_date(..., allow_none=True)`; items with missing/unparseable dates are logged, counted, and treated as "oldest" (never win a keep=last conflict) rather than raising.
+- `dedupe_by_date`: use `parse_date(..., allow_none=True)` at util.py:81 (parameter already exists);
+  items with missing/unparseable dates are logged, counted, and treated as "oldest" (never win a
+  keep=last conflict) rather than raising. Guard the `date >= existing_date` comparison (util.py:87)
+  against `None` now that dates can be absent.
 - Docstring the keep=last rationale (above) in util.py.
 - Document precedence: embed metadata (`item_type`) is authoritative for `is_track`; the path heuristic is the pre-enrichment fallback. Keep the read-time overlay (no write-back into `release_cache.json` — one owner per field; see LOG-20).
 
@@ -201,10 +270,24 @@ Enrichment is currently: frontend loops serially over releases, calling `/embed-
 
 ### LOG-12 — Timezone-coherent day bucketing (M)
 
-**Rationale.** Three clocks currently define "a day": (1) Gmail's `before:`/`after:` operators interpret dates in the *Gmail account's* timezone; (2) the bucket date comes from the email `Date` header via `parsedate_to_datetime(...).date()` (gmail.py:187-192) — i.e., the *sender's* (Bandcamp's) timezone offset; (3) today-exclusion and the calendar use the *local machine's* date (`date.today()`, six call sites). A release email sent 23:30 PST can bucket to a different day than the one the query fetched it under, and than the one the user sees on the calendar. Consequences: boundary emails silently missed at range edges, releases persisted under days outside the queried range, and the today/window exclusion misfiring by one day. This is exactly the class of invisible loss the append-only cache turns permanent — the settling window (LOG-2) masks the trailing edge but not historical range edges.
+**Rationale. STILL PRESENT — and now the bucketing lives in the providers, so the "one-line change" is
+two call sites.** Three clocks still define "a day": (1) the provider search date operators interpret
+dates in the *account's* timezone (Gmail `before:`/`after:`; IMAP `SINCE`/`BEFORE`, imap_provider.py:100-110);
+(2) the bucket date comes from the email `Date` header via `parsedate_to_datetime(...).strftime("%Y-%m-%d")`
+— **now done inside each provider**: `imap_provider.py:197-199` and the Gmail transport
+(`gmail_client.get_messages`, surfaced as `EmailMessage.date`), i.e. the *sender's* (Bandcamp's) tz
+offset, and no `.date()`-to-local conversion in either; (3) today-exclusion and the calendar use the
+*local machine's* date (`date.today()`, still multiple call sites). A release email sent 23:30 PST can
+bucket to a different day than the one the query fetched it under, and than the one the user sees on the
+calendar. Consequences unchanged: boundary emails silently missed at range edges, releases persisted
+under days outside the queried range, today/window exclusion misfiring by one day. The settling window
+(LOG-2) masks the trailing edge but not historical range edges.
 
 **Change.**
-- Bucket by the user's local date: convert the parsed `Date` header to the local timezone before `.date()` (one-line change at pipeline.py:32 / gmail.py:187-192); document that all day semantics are local-time.
+- Bucket by the user's local date: convert the parsed `Date` header to the local timezone before
+  formatting — **fix it once behind the `EmailProvider` boundary** (a shared helper both
+  `imap_provider._parse` and the Gmail adapter call) rather than patching the two `strftime` sites
+  independently; document that all day semantics are local-time.
 - Pad Gmail queries for *refresh* scans (LOG-2 window days, LOG-3 re-checks) by ±1 day; persistence is merge-by-URL so over-fetch is harmless (I3), and the pad absorbs the Gmail-account-timezone skew. First-time scans keep the current `after:start`/`before:end+1d` bounds (already end-inclusive) — padding everything would mark unqueried days' neighbors inconsistently, so the pad applies to query bounds only, never to which days get marked scraped.
 - Unify "today" logic behind one helper (also the freeze-point for tests, ARCH-10).
 
@@ -234,7 +317,28 @@ Enrichment is currently: frontend loops serially over releases, calling `/embed-
 
 ### LOG-14 — Two-stage matching: structural classification instead of English-copy gates (M)
 
-**Rationale.** Both the query (`subject:(New release from)`, pipeline.py:89) and the parser gate (`subject.lower().startswith("new release from")`, gmail.py:218) hard-code Bandcamp's current English subject copy. Failure modes: (a) Bandcamp rewords or localizes its notification subjects (Bandcamp's site ships in ~9 languages; a non-English account may receive localized notifications — **unverified**, see investigation below) → the app finds nothing and confidently records the days as *empty*, the worst kind of wrong under I1; (b) `subject:(...)` is unquoted, so Gmail matches the words anywhere in the subject — replies ("Re: New release from…") enter the pipeline and currently become junk rows (PY-5/LOG-8); (c) other `noreply@bandcamp.com` mail (receipts, fan-mail digests) also contains `/album/` links, so the sender alone cannot be the filter.
+**Reframed at `e363bf4`.** The query and gate moved and are now **provider-shared**: the search subject
+lives in `SearchQuery(subject_contains="New release from")` (pipeline.py:136), translated per provider
+(Gmail `subject:` at gmail_provider.py, IMAP `SUBJECT`/manual filter at imap_provider.py); the parser
+gate `subject_text.lower().startswith("new release from")` is now in
+`bandcamp_email_parser.py:36`. Two things changed the shape of this item:
+- **IMAP made the search stage genuinely unreliable** (commit `28cec44`): IMAP `SEARCH` semantics vary by
+  server and can over-match, so the merge already *leaned harder* on the strict parser-side subject gate
+  as the precision backstop. That validates the "classify by structure at parse time, not by trusting the
+  search" direction of this item — but the current gate is still a single English-copy `startswith`, so
+  the recall risk (localized/reworded subjects → silently-empty days, I1) is unaddressed and now spans
+  two providers.
+- The reply/junk-row failure mode is **partly mitigated**: linkless and gate-rejected emails no longer
+  become junk rows (LOG-8 producer fix), so mis-classification now costs a *miss* (email dropped) rather
+  than a poisoned cache row — still wrong under I1, but less destructive.
+
+**Rationale.** Both the search subject and the parser gate hard-code Bandcamp's current English subject
+copy. Failure modes: (a) Bandcamp rewords or localizes its notification subjects (~9 site languages; a
+non-English account may receive localized notifications — **unverified**, see investigation below) → the
+app finds nothing and confidently records the days as *empty*, the worst kind of wrong under I1;
+(b) over-matching search (IMAP especially) pulls in replies/receipts, which the strict gate then drops —
+acceptable for precision but the gate is the *only* precision control; (c) other `noreply@bandcamp.com`
+mail (receipts, fan-mail digests) also contains `/album/` links, so the sender alone cannot be the filter.
 
 **Change.**
 - **Investigate first (part of this item):** collect real Bandcamp notification samples — non-English account locale, current subject/body copy, custom-domain artists — and commit them (redacted) as fixtures. This decides how much of the following is needed now vs. speculative.
@@ -251,9 +355,15 @@ Enrichment is currently: frontend loops serially over releases, calling `/embed-
 
 ### LOG-15 — Release-link selection: candidates, not first-anchor-wins (S)
 
-**Rationale.** The first `<a>` whose path contains `/album/` or `/track/` wins (gmail.py:225-235). A footer/marketing link with those fragments would beat the real release link; the actual notification repeats the release link several times (artwork, title, button). Custom-domain support (path heuristic) is correct and must be kept.
+**Rationale. STILL PRESENT**, now in `bandcamp_email_parser.py:41-49` (`_find_bandcamp_release_url`
+returns the first `<a>` whose path contains `/album/` or `/track/`). A footer/marketing link with those
+fragments would beat the real release link; the actual notification repeats the release link several
+times (artwork, title, button). Custom-domain support (path heuristic) is correct and must be kept. This
+now benefits both providers for free (shared parser).
 
-**Change.** Collect all candidate release links (canonicalized per LOG-9); pick the most frequent; prefer candidates whose anchor wraps an `<img>` or the italic title as a tiebreak. Log when candidates disagree.
+**Change.** In `bandcamp_email_parser.py`: collect all candidate release links (canonicalized per LOG-9);
+pick the most frequent; prefer candidates whose anchor wraps an `<img>` or the italic title as a
+tiebreak. Log when candidates disagree.
 
 **Acceptance criteria.**
 - Fixture email with a decoy `/album/` link in the footer resolves to the repeated real link.
@@ -263,9 +373,19 @@ Enrichment is currently: frontend loops serially over releases, calling `/embed-
 
 ### LOG-16 — Early-stop Gmail search with a real cap (S)
 
-**Rationale.** `search_messages` paginates every result page before the cap is checked and the ids discarded (gmail.py:128-148 vs pipeline.py:95-96, PERF-7) — the heavy first-run backlog case burns ~50 list calls just to show the "too many results" modal. Also `max_results` from the query string is unclamped and un-validated (`int(...)` 500s on garbage; nothing enforces `GMAIL_MAX_RESULTS_HARD`, server.py:559/46).
+**Rationale. STILL PRESENT.** Gmail's `search_messages` still paginates every result page before any cap
+check (now `gmail_client.py:244-255`); `messages().list` is called with no `maxResults`, so the cap is
+enforced only *after* all ids are collected — the merge moved the `MaxResultsExceeded` raise up into the
+pipeline (`if max_results and len(message_ids) > max_results`, pipeline.py:141), which still means every
+page is fetched first (PERF-7). And `max_results` from the query string is still unclamped/un-validated:
+`int(request.args.get("max_results") or GMAIL_MAX_RESULTS_HARD)` at server.py:631 500s on garbage and
+nothing enforces the hard cap (`GMAIL_MAX_RESULTS_HARD = 2000`, server.py:60). **Provider note:** IMAP
+`SEARCH` returns all matching UIDs in one response (imap_provider.py), so the early-stop concern is
+Gmail-pagination-specific; the server-side clamp/validate applies to both.
 
-**Change.** Pass `maxResults=min(500, cap+1)` to `messages().list`, stop paginating once `len > cap`; clamp and validate the client-supplied `max_results` server-side (parse failure → SSE error event, value → `min(value, GMAIL_MAX_RESULTS_HARD)`).
+**Change.** Gmail: pass `maxResults=min(500, cap+1)` to `messages().list`, stop paginating once
+`len > cap`. Server: clamp and validate the client-supplied `max_results` (parse failure → SSE error
+event, value → `min(value, GMAIL_MAX_RESULTS_HARD)`). This is the same server-side fix as CQ-04.
 
 **Acceptance criteria.**
 - An over-cap search performs ≤ `ceil((cap+1)/500)` list calls before raising `MaxResultsExceeded`.
@@ -275,9 +395,20 @@ Enrichment is currently: frontend loops serially over releases, calling `/embed-
 
 ### LOG-17 — Batch download: public API, backoff, honest errors (M)
 
-**Rationale.** `get_messages` reads the private `batch._responses` attribute and hand-parses raw bodies (gmail.py:158-174) — one library upgrade from breaking outright; a single 429 aborts the whole populate with an error message telling the user about a `--batch` CLI flag that does not exist (PY-9). Under LOG-1 that abort is no longer data loss, but it's still a failed run for a transient condition.
+**Rationale. STILL PRESENT**, now `gmail_client.py:267-290` (`get_messages`). It calls `batch.add(...)`
+(line 276) but still reads the private `batch._responses` dict and hand-`json.loads`es raw bodies
+(lines 278-281) — one library upgrade from breaking outright; a single 429 still aborts the whole
+populate with an error telling the user about a `--batch` CLI flag that does not exist
+(gmail_client.py:285, PY-9). Note LOG-1 is *not yet* fixed, so this abort **can still be data loss**
+(range marked scraped before persist). **Provider scope:** this is the Gmail batch path; IMAP fetches
+one message per `uid_fetch_body` call (imap_client.py:150) with no batch — but it needs the same
+timeout/backoff/honest-error contract, so make backoff a property of the `EmailProvider.fetch` contract
+rather than a Gmail-only patch.
 
-**Change.** Use `batch.add(request, callback=...)` (parsed responses + per-message exceptions); on 429/5xx, retry the failed subset with exponential backoff + jitter (bounded, e.g., 3 attempts), then fail the run with an accurate message; per-message permanent errors (404 on one message) skip that message with a counted log, not the run.
+**Change.** Gmail: use `batch.add(request, callback=...)` (parsed responses + per-message exceptions);
+on 429/5xx, retry the failed subset with exponential backoff + jitter (bounded, e.g., 3 attempts), then
+fail the run with an accurate message; per-message permanent errors (404 on one message) skip that
+message with a counted log, not the run. IMAP: matching per-fetch timeout + bounded retry.
 
 **Acceptance criteria.**
 - Simulated single-batch 429 → run completes after backoff; user sees a "rate-limited, retrying…" progress line.
@@ -288,18 +419,35 @@ Enrichment is currently: frontend loops serially over releases, calling `/embed-
 
 ### LOG-18 — Parse stage never aborts a run (S)
 
-**Rationale.** One weird email currently kills the whole populate (and, pre-ARCH-3 fixes, silently): no-HTML-part emails crash on `soup.find_all` (gmail.py:222/226/235, PY-3 — empirically reproduced); a missing/garbled `Date` header raises at pipeline.py:32 (PY-7); the speculative `quopri.decodestring` pass can silently corrupt legitimate HTML the Gmail API already decoded (gmail.py:66-72, PY-11). Per-email failure must cost one email (I5).
+**Status at `e363bf4`: MOSTLY RESOLVED — three of the four crashers fixed by the merge (commit
+`d3420ae`), two residuals remain.**
+- ✅ **No-HTML / empty body:** `parse_release_email` early-returns the None-tuple when the body is
+  empty/`"none"` (bandcamp_email_parser.py:29-30), and `construct_release_list` skips falsy `html_text`
+  (pipeline.py:48-50). No more `soup.find_all` on `None`.
+- ✅ **Per-email parse isolation:** the per-email parse is wrapped in try/except that counts + logs and
+  continues (pipeline.py:52-60, 83-84). One weird email no longer aborts the run.
+- ⚠️ **Date parse still partly fatal (PY-7):** the legacy-dict path's `parse_date(email.get("date"))` at
+  pipeline.py:40 sits *outside* the per-email try (which starts at line 52), so a present-but-garbage
+  Date still raises unhandled; and `dedupe_by_date` still calls `parse_date` without `allow_none`
+  (util.py:81) — see LOG-10. The provider `EmailMessage.date` path is safe (pre-formatted string).
+- ⚠️ **quopri corruptor still present (PY-11):** the unconditional `quopri.decodestring` under a bare
+  `except: pass` survives in the Gmail transport (`gmail_client.py:196-200`). The IMAP path decodes
+  correctly (imap_provider.py:234-244), so this is now Gmail-only. Delete it there (CQ-16).
+- ⚠️ **Skip counts are not by reason:** the log says `"Skipped N message(s) due to parse errors"`
+  (pipeline.py:84) — the by-reason breakdown (no-html / no-date / no-link / classifier-reject) is not yet
+  implemented. Also note the `s = email_html.decode()` block the audit called dead (CQ-01) is now **live**
+  in the parser (bandcamp_email_parser.py:23-27) feeding the empty-body guard — do not delete it.
 
-**Change.**
-- Early-return the None-tuple when `email_text` is falsy (before `_find_bandcamp_release_url`).
-- Wrap the per-email parse in `construct_release_list` in try/except: log, count, skip.
-- `parse_date(email.get("date"), allow_none=True)`; date-less emails are skipped with a count (they can't be bucketed).
-- Delete the unconditional quopri pass (the API already reverses Content-Transfer-Encoding); also delete the dead `s = email_text.decode()` block (gmail.py:211-215).
+**Remaining change.**
+- `parse_date(..., allow_none=True)` at the two unguarded sites (pipeline.py:40 legacy path if kept,
+  util.py:81) — date-less emails skipped with a count.
+- Delete the Gmail-side unconditional quopri pass (CQ-16).
+- Emit skip counts *by reason* into the run summary (feeds the typed progress events, ARCH-4).
 
 **Acceptance criteria.**
-- A plain-text-only email in a 50-email fixture run yields 49 releases + 1 counted skip; run completes.
-- An email whose HTML contains `id=3D` style sequences round-trips byte-identical into the parser (no quopri mangling).
-- Run summary reports skip counts by reason (no-html, no-date, no-link, classifier-reject).
+- A plain-text-only email in a 50-email fixture run yields 49 releases + 1 counted skip; run completes. **(now passing for the no-HTML case; add the regression test)**
+- A Gmail message whose HTML contains `id=3D`/`=E2` sequences round-trips byte-identical into the parser (no quopri mangling). **(still failing — quopri present)**
+- Run summary reports skip counts by reason (no-html, no-date, no-link, classifier-reject). **(still generic)**
 
 **Migration.** None. Previously-corrupted titles/URLs in old cache rows self-heal via LOG-3 re-check.
 
@@ -309,9 +457,21 @@ Enrichment is currently: frontend loops serially over releases, calling `/embed-
 
 ### LOG-19 — Decide `img_url`: drop from the email-parse model; add `art_url` to enrichment (S)
 
-**Rationale.** `img_url` is declared but never assigned (gmail.py:204), threaded through pipeline/util, and serialized as `null` forever — a dead field that misleads readers (audit low-severity cluster). Two honest options: (a) delete it end-to-end; (b) actually populate artwork. Artwork *is* cheaply available at enrichment time — the release page is already being fetched and carries `og:image` — whereas scraping the email's `<img>` adds a second, less reliable source. **Decision: (b)-at-enrichment + delete the parse-time field.** Rationale: zero extra network cost, one owner (the embed/enrichment store, per LOG-20), and it gives the UI plan the option of small thumbnails in the detail row without committing the table to them (product brief: calm, dense table — artwork display is a UI-plan decision; this item only makes the data available).
+**Rationale. STILL PRESENT** at renamed sites: `img_url` is declared but only ever `None` in
+`parse_release_email` (bandcamp_email_parser.py:16, returned at 106), threaded through `pipeline.py:53,67,71`
+and `construct_release` (util.py:37,44), serialized as `null` forever — a dead field that misleads
+readers (audit low-severity cluster; also CQ-32). Two honest options: (a) delete it end-to-end;
+(b) actually populate artwork. Artwork *is* cheaply available at enrichment time — the release page is
+already being fetched and carries `og:image` — whereas scraping the email's `<img>` adds a second, less
+reliable source. **Decision: (b)-at-enrichment + delete the parse-time field.** Rationale: zero extra
+network cost, one owner (the embed/enrichment store, per LOG-20), and it gives the UI plan the option of
+small thumbnails in the detail row without committing the table to them (product brief: calm, dense table —
+artwork display is a UI-plan decision; this item only makes the data available).
 
-**Change.** Remove `img_url` from `construct_release`/`scrape_info_from_email`/pipeline; capture `og:image` as `art_url` in the embed-cache record during LOG-5/LOG-7 fetches; expose via the same overlay path as `embed_url`.
+**Change.** Remove `img_url` from `construct_release` (util.py), `parse_release_email`
+(bandcamp_email_parser.py), and `pipeline.py`; capture `og:image` as `art_url` in the embed-cache record
+during LOG-5/LOG-7 fetches; expose via the same overlay path as `embed_url`. (CQ-32 owns the delete half;
+keep the two in one PR so the field isn't half-removed.)
 
 **Acceptance criteria.**
 - `img_url` appears nowhere in the codebase; `/releases` rows no longer carry it (frontend never read it — verify with grep).
@@ -348,15 +508,74 @@ Enrichment is currently: frontend loops serially over releases, calling `/embed-
 
 ---
 
+## 7. New-code findings (from the `e363bf4` IMAP/provider merge)
+
+Added by the re-validation. IDs continue the LOG series from 22.
+
+### LOG-22 — The scrape ledger is provider-blind (M)
+
+**Problem.** The scrape ledger records "day X is done" keyed by date only (`scrape_status.json`), but
+"done" now depends on *which provider* answered. A user can populate June via Gmail, then switch the
+active provider to IMAP (`provider_factory` / `/provider-config`, server.py:755): the ledger still says
+June is done, so IMAP is never queried for it — even though the two mailboxes may have different coverage
+(different folders, retention, or the Bandcamp mail only lives in one account). Under I1/I2 this is the
+same silent-emptiness failure, introduced by the new abstraction. The `provider_type` is only used for
+log wording today (pipeline.py:104-106), never for correctness.
+
+**Change (decide one).** Either (a) document and enforce single-provider-at-a-time: switching providers
+prompts a cache/ledger reset or a full re-check (LOG-3), and the ledger records which provider produced
+it; or (b) key the ledger by `(provider, date)` so each provider has its own coverage map and merge stays
+additive by URL (I3). (a) is far cheaper and fits the "calm single-user utility" brief; (b) is the honest
+model if multi-account is a real use case. Pick (a) unless the product decision says otherwise.
+
+**Acceptance.** Switching provider and re-populating a "done" range actually queries the new provider (or
+is explicitly blocked with a message), rather than silently returning the old provider's cache.
+
+### LOG-23 — IMAP folder/search recall can silently record empty days (M)
+
+**Problem.** IMAP onboarding auto-populates, ranks, and selects a folder to scan (commit `d5ca589`), and
+IMAP `SEARCH` is server-dependent and weaker than Gmail's. If the wrong folder is selected, or the server's
+`SUBJECT`/`SINCE` matching under-returns, `search()` yields nothing → `persist_empty_date_range` marks the
+range **checked-and-empty** (pipeline.py:148-151) → under the append-only trap those days are never
+re-queried. This is the I1 "confidently records days as empty" failure, now reachable through normal IMAP
+setup, not just a copy change.
+
+**Change.** (1) Never let a *search returning zero* on a first-time IMAP scan write an empty-day record
+without corroboration — e.g. require that the folder is confirmed to contain *any* `noreply@bandcamp.com`
+mail before trusting an empty result, or defer empty-marking for IMAP until a folder is validated.
+(2) Surface folder/search diagnostics in the run summary (`searched folder X, matched 0 of N sender
+messages`) so a mis-selected folder is visible, not silent. (3) Pairs with LOG-14's structural
+classification and LOG-2's settling window. Coordinate the folder-selection UX with the UX plan.
+
+**Acceptance.** A deliberately wrong IMAP folder produces a visible "0 Bandcamp messages found in this
+folder — is it the right one?" signal, not a silent set of empty-marked days; empty-marking for IMAP
+requires a validated folder.
+
+### LOG-24 — `EmailMessage.date` empty-string on unparseable header (S)
+
+**Problem.** On a missing/garbled `Date` header the IMAP adapter sets `date=""` (imap_provider.py:195-201);
+`construct_release_list` maps falsy `date` to `None` (pipeline.py:33) and the release is still constructed
+with `date=None`. That row then flows into `dedupe_by_date`, where `parse_date(None)` raises (LOG-10) —
+i.e. LOG-18's date-fatality reaches the cache via the IMAP path too. It also means a real release can be
+persisted with no date and become unbucketable.
+
+**Change.** Fold into LOG-10/LOG-18: `dedupe_by_date` tolerates `None`/`""` dates (skip-with-count), and
+a release with no parseable date is either dropped-with-count at construction or bucketed via the LOG-12
+local-time helper if any timestamp is recoverable. Make date-derivation identical across both providers
+(the shared `EmailProvider` date helper from LOG-12).
+
+**Acceptance.** An IMAP message with an unparseable `Date` yields one counted skip, never a raise inside
+`dedupe_by_date`, and never a `date:null` row in `release_cache.json`.
+
 ## Sequencing & dependencies
 
 Correctness first (all small), then the model changes that need migrations, then throughput.
 
 | Order | Items | Why first |
 |---|---|---|
-| 1 | LOG-1, LOG-18, LOG-4, LOG-8 | Stop the active data loss / run-aborting crashers. No migrations. Pairs with ARCH-3 (SSE error reporting). |
+| 1 | **LOG-1**, LOG-18 (residuals), LOG-4, LOG-10, LOG-24 | Stop the active data loss / run-aborting crashers. **LOG-1 (persist-before-mark) is still unfixed at `e363bf4` and remains the single highest-severity item.** LOG-18's no-HTML/isolation half is done; LOG-10/LOG-24 close the date-crash + IMAP-empty-date residuals. LOG-8's producer half is done. No migrations. Pairs with ARCH-3 (SSE error reporting). |
 | 2 | LOG-21 → LOG-11, LOG-9, LOG-20 (+ LOG-5) | Migration machinery, then the three schema changes in one release. |
-| 3 | LOG-2, LOG-3, LOG-12, LOG-13 | Refresh semantics + day-boundary coherence on top of the fixed ledger. LOG-3 is also the user-facing recovery story — ship before or with the UX plan's "Re-check" affordance. |
-| 4 | LOG-7 → LOG-6, LOG-14, LOG-15, LOG-16, LOG-17, LOG-10, LOG-19 | Throughput, politeness, and robustness; LOG-6 depends on LOG-5/LOG-7; LOG-14's fixture investigation can start anytime. |
+| 3 | LOG-2, LOG-3, LOG-12, LOG-13, **LOG-22** | Refresh semantics + day-boundary coherence on top of the fixed ledger. LOG-3 is also the user-facing recovery story. LOG-22 (provider-blind ledger) rides with the ledger/refresh work. |
+| 4 | LOG-7 → LOG-6, LOG-14, **LOG-23**, LOG-15, LOG-16, LOG-17, LOG-19 | Throughput, politeness, and robustness; LOG-6 depends on LOG-5/LOG-7; LOG-14+LOG-23 (search recall / IMAP folder) share the fixture investigation, which can start anytime. |
 
-Test prerequisite for nearly everything here: the `BCFEED_DATA_DIR` seam and frozen-today helper from ARCH-10 — schedule that alongside step 1.
+Test prerequisite for nearly everything here: the `BCFEED_DATA_DIR` seam and frozen-today helper from ARCH-10 — schedule that alongside step 1. **Provider parity (CQ-71):** every parse/search/robustness fix in steps 1 and 4 must be exercised against *both* the Gmail and IMAP paths (or explicitly marked N/A), since the abstraction doubled the surface.
