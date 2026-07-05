@@ -1,0 +1,4 @@
+# Development-only dependencies (tests, lint, format). Not shipped to users.
+# Pinned so local runs and CI agree; bump deliberately.
+pytest==9.1.1
+ruff==0.15.20

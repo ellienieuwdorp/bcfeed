@@ -1,0 +1,16 @@
+From: Bandcamp <noreply@bandcamp.com>
+To: listener@example.com
+Subject: New release from No Link Label
+Date: Thu, 19 Jun 2025 11:00:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="synthetic-boundary-04"
+
+--synthetic-boundary-04
+Content-Type: text/plain; charset="utf-8"
+
+Greetings friend, No Link Label just released Ghost Signal, check it out here.
+--synthetic-boundary-04
+Content-Type: text/html; charset="utf-8"
+
+<html><body><p>Greetings friend, <b>No Link Label</b> just released <i>Ghost Signal</i>, check it out here: <a href="https://bandcamp.com/">home</a></p></body></html>
+--synthetic-boundary-04--

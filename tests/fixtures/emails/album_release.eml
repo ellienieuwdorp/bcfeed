@@ -1,0 +1,16 @@
+From: Bandcamp <noreply@bandcamp.com>
+To: listener@example.com
+Subject: New release from Midnight Tapes
+Date: Mon, 16 Jun 2025 14:30:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="synthetic-boundary-01"
+
+--synthetic-boundary-01
+Content-Type: text/plain; charset="utf-8"
+
+Greetings friend, Midnight Tapes just released Neon Fields by Aria Vale, check it out here: https://midnighttapes.bandcamp.com/album/neon-fields
+--synthetic-boundary-01
+Content-Type: text/html; charset="utf-8"
+
+<html><body><p>Greetings friend, <b>Midnight Tapes</b> just released <i>Neon Fields</i> by Aria Vale, check it out here: <a href="https://midnighttapes.bandcamp.com/album/neon-fields#more">listen</a></p></body></html>
+--synthetic-boundary-01--

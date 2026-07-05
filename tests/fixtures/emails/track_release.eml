@@ -1,0 +1,16 @@
+From: Bandcamp <noreply@bandcamp.com>
+To: listener@example.com
+Subject: New release from Echo Parade
+Date: Tue, 17 Jun 2025 09:05:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="synthetic-boundary-02"
+
+--synthetic-boundary-02
+Content-Type: text/plain; charset="utf-8"
+
+Greetings friend, Echo Parade just released Glass Corridor, check it out here: https://echoparade.bandcamp.com/track/glass-corridor
+--synthetic-boundary-02
+Content-Type: text/html; charset="utf-8"
+
+<html><body><p>Greetings friend, <b>Echo Parade</b> just released <i>Glass Corridor</i>, check it out here: <a href="https://echoparade.bandcamp.com/track/glass-corridor">listen</a></p></body></html>
+--synthetic-boundary-02--

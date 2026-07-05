@@ -1,0 +1,16 @@
+From: Bandcamp <noreply@bandcamp.com>
+To: listener@example.com
+Subject: New release from Static Bloom
+Date: Wed, 18 Jun 2025 20:45:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="synthetic-boundary-03"
+
+--synthetic-boundary-03
+Content-Type: text/plain; charset="utf-8"
+
+Greetings friend, Static Bloom just announced Paper Suns by Static Bloom, check it out here: https://music.staticbloom.net/album/paper-suns
+--synthetic-boundary-03
+Content-Type: text/html; charset="utf-8"
+
+<html><body><p>Greetings friend, <b>Static Bloom</b> just announced <i>Paper Suns</i> by Static Bloom, check it out here: <a href="https://music.staticbloom.net/album/paper-suns">listen</a></p></body></html>
+--synthetic-boundary-03--
