@@ -14,7 +14,9 @@ from queue import SimpleQueue
 
 import requests
 from flask import Flask, Response, jsonify, render_template, request, send_file, stream_with_context
+from flask.testing import FlaskClient
 from markdown_it import MarkdownIt
+from werkzeug.datastructures import Headers
 from werkzeug.serving import WSGIRequestHandler, make_server
 
 import json_store
@@ -85,11 +87,63 @@ def _build_doc_markdown_renderer() -> MarkdownIt:
 DOC_MARKDOWN_RENDERER = _build_doc_markdown_renderer()
 
 
-def _corsify(response):
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
-    return response
+# --- Localhost lockdown (WP-08: SEC-4/SEC-11, ARC-5b/5c) -------------------
+# The app is single-user and same-origin (the dashboard is served from this
+# same host:port), so no CORS headers are needed at all. Two guards cover
+# every route, including SSE and static files:
+#
+# 1. Host validation: a browser always sends the hostname the user typed, so
+#    any request whose Host is not localhost/127.0.0.1 came through a foreign
+#    name — the DNS-rebinding pattern. Reject with 403.
+# 2. Anti-CSRF header: every state-mutating (non-GET) request must carry
+#    X-BCFeed-Request: 1. Cross-site forms and "simple" fetches cannot set
+#    custom headers (doing so forces a CORS preflight, which fails because we
+#    send no Access-Control-Allow-Origin), so drive-by CSRF is blocked. The
+#    SSE endpoint stays a plain GET because EventSource cannot set headers.
+MUTATION_HEADER = "X-BCFeed-Request"
+_ALLOWED_HOSTNAMES = {"localhost", "127.0.0.1"}
+_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+@app.before_request
+def _localhost_lockdown():
+    hostname = (request.host or "").partition(":")[0].strip().lower()
+    if hostname not in _ALLOWED_HOSTNAMES:
+        app.logger.warning("Rejected request with non-local Host header: %r", request.host)
+        return jsonify({"error": "bcfeed only accepts requests from this computer."}), 403
+    if request.method not in _SAFE_METHODS and request.headers.get(MUTATION_HEADER) != "1":
+        app.logger.warning(
+            "Rejected %s %s without the %s header", request.method, request.path, MUTATION_HEADER
+        )
+        return jsonify(
+            {"error": "This request was blocked because it did not come from bcfeed."}
+        ), 403
+    return None
+
+
+class _SameOriginTestClient(FlaskClient):
+    """Default test client modelling the app's own browser requests.
+
+    The dashboard's fetch wrapper attaches the anti-CSRF header to every
+    non-GET request, so route tests exercising handler behavior get the same
+    treatment by default. Lockdown tests that must omit the header (to prove
+    the guard) use werkzeug.test.Client directly against the WSGI app.
+    """
+
+    # Defined under a private name and aliased onto FlaskClient's request
+    # entry point, so the WP-05 "no direct file-opening calls in server.py"
+    # source guard keeps meaning file IO only.
+    def _request_with_header(self, *args, **kwargs):
+        headers = Headers(kwargs.pop("headers", None) or {})
+        if MUTATION_HEADER not in headers:
+            headers[MUTATION_HEADER] = "1"
+        kwargs["headers"] = headers
+        return FlaskClient.open(self, *args, **kwargs)
+
+    open = _request_with_header
+
+
+app.test_client_class = _SameOriginTestClient
 
 
 # All store persistence goes through json_store (ARC-2a): one locked, atomic
@@ -158,11 +212,9 @@ def _save_embed_metadata(
     json_store.update_json(EMBED_CACHE_PATH, mutator, {}, indent=2)
 
 
-@app.route("/health", methods=["GET", "OPTIONS"])
+@app.route("/health", methods=["GET"])
 def health():
-    if request.method == "OPTIONS":
-        return _corsify(app.response_class(status=204))
-    return _corsify(jsonify({"ok": True}))
+    return jsonify({"ok": True})
 
 
 # Suppress noisy logging for health checks
@@ -202,27 +254,23 @@ def start_server_thread(preferred_port: int = 5050):
     return server, thread, port
 
 
-@app.route("/viewed-state", methods=["GET", "POST", "OPTIONS"])
+@app.route("/viewed-state", methods=["GET", "POST"])
 def viewed_state():
-    if request.method == "OPTIONS":
-        return _corsify(app.response_class(status=204))
     if request.method == "GET":
         items = sorted(_load_viewed())
-        return _corsify(jsonify({"viewed": items}))
+        return jsonify({"viewed": items})
 
     data = request.get_json(silent=True) or {}
     url = data.get("url")
     read = data.get("read")
     if not url or not isinstance(read, bool):
-        return _corsify(jsonify({"error": "Missing url or read flag"})), 400
+        return jsonify({"error": "Missing url or read flag"}), 400
     _set_url_flag(VIEWED_PATH, url, read)
-    return _corsify(jsonify({"ok": True}))
+    return jsonify({"ok": True})
 
 
-@app.route("/releases", methods=["GET", "OPTIONS"])
+@app.route("/releases", methods=["GET"])
 def releases_endpoint():
-    if request.method == "OPTIONS":
-        return _corsify(app.response_class(status=204))
     try:
         releases = get_full_release_cache()
         embed_cache = _load_embed_cache()
@@ -240,26 +288,25 @@ def releases_endpoint():
                     rel["is_track"] = meta.get("is_track")
                 if meta.get("description"):
                     rel["description"] = meta.get("description")
-    except Exception as exc:
-        return _corsify(jsonify({"error": f"Failed to load releases: {exc}"})), 500
-    return _corsify(jsonify({"releases": releases}))
+    except Exception:
+        app.logger.exception("Failed to load releases")
+        return jsonify({"error": "Couldn't load releases. See the server log for details."}), 500
+    return jsonify({"releases": releases})
 
 
-@app.route("/starred-state", methods=["GET", "POST", "OPTIONS"])
+@app.route("/starred-state", methods=["GET", "POST"])
 def starred_state():
-    if request.method == "OPTIONS":
-        return _corsify(app.response_class(status=204))
     if request.method == "GET":
         items = sorted(_load_starred())
-        return _corsify(jsonify({"starred": items}))
+        return jsonify({"starred": items})
 
     data = request.get_json(silent=True) or {}
     url = data.get("url")
     starred = data.get("starred")
     if not url or not isinstance(starred, bool):
-        return _corsify(jsonify({"error": "Missing url or starred flag"})), 400
+        return jsonify({"error": "Missing url or starred flag"}), 400
     _set_url_flag(STARRED_PATH, url, starred)
-    return _corsify(jsonify({"ok": True}))
+    return jsonify({"ok": True})
 
 
 def _has_credentials_for_provider() -> bool:
@@ -396,34 +443,41 @@ def config_json():
         "clear_status_on_load": False,
         "show_dev_settings": False,
     }
-    return _corsify(jsonify(payload))
+    return jsonify(payload)
+
+
+def _missing_file_response(path: Path):
+    # A missing app file is a 404 with a generic body: no absolute paths in
+    # responses (SEC-9); details go to the server log.
+    app.logger.error("Static file not found: %s", path)
+    return jsonify({"error": "Not found."}), 404
 
 
 @app.route("/dashboard", methods=["GET"])
 def dashboard_page():
     if not DASHBOARD_PATH.exists():
-        return _corsify(jsonify({"error": f"dashboard not found at {DASHBOARD_PATH}"})), 500
+        return _missing_file_response(DASHBOARD_PATH)
     return send_file(DASHBOARD_PATH, mimetype="text/html")
 
 
 @app.route("/dashboard.css", methods=["GET"])
 def dashboard_css():
     if not DASHBOARD_CSS_PATH.exists():
-        return _corsify(jsonify({"error": f"dashboard css not found at {DASHBOARD_CSS_PATH}"})), 500
+        return _missing_file_response(DASHBOARD_CSS_PATH)
     return send_file(DASHBOARD_CSS_PATH, mimetype="text/css")
 
 
 @app.route("/dashboard.js", methods=["GET"])
 def dashboard_js():
     if not DASHBOARD_JS_PATH.exists():
-        return _corsify(jsonify({"error": f"dashboard js not found at {DASHBOARD_JS_PATH}"})), 500
+        return _missing_file_response(DASHBOARD_JS_PATH)
     return send_file(DASHBOARD_JS_PATH, mimetype="application/javascript")
 
 
 # Docs routes and helpers.
 def _serve_markdown_doc(path: Path, title: str) -> Response:
     if not path.exists():
-        return _corsify(jsonify({"error": f"{path.name} not found at {path}"})), 500
+        return _missing_file_response(path)
     markdown_text = path.read_text(encoding="utf-8")
     try:
         body = DOC_MARKDOWN_RENDERER.render(markdown_text)
@@ -464,13 +518,11 @@ def readme_doc():
     return _serve_markdown_doc(path, title)
 
 
-@app.route("/embed-meta", methods=["GET", "OPTIONS"])
+@app.route("/embed-meta", methods=["GET"])
 def embed_meta():
-    if request.method == "OPTIONS":
-        return _corsify(app.response_class(status=204))
     release_url = request.args.get("url")
     if not release_url:
-        return _corsify(jsonify({"error": "Missing url parameter"})), 400
+        return jsonify({"error": "Missing url parameter"}), 400
     try:
         resp = requests.get(
             release_url,
@@ -478,14 +530,15 @@ def embed_meta():
             timeout=10,
         )
         resp.raise_for_status()
-    except Exception as exc:
-        return _corsify(jsonify({"error": f"Failed to fetch Bandcamp page: {exc}"})), 502
+    except Exception:
+        app.logger.exception("Failed to fetch Bandcamp page for embed metadata")
+        return jsonify({"error": "Couldn't reach the Bandcamp page for this release."}), 502
 
     html_text = resp.text
     data = extract_bc_meta(html_text)
     description = extract_bandcamp_description(html_text)
     if not data:
-        return _corsify(jsonify({"error": "Unable to find bc-page-properties meta"})), 404
+        return jsonify({"error": "That page doesn't look like a Bandcamp release."}), 404
 
     item_id = data.get("item_id")
     is_track = (data.get("item_type") == "track") or (data.get("item_type") == "t")
@@ -500,7 +553,7 @@ def embed_meta():
         description=description,
     )
 
-    response = jsonify(
+    return jsonify(
         {
             "release_id": item_id,
             "is_track": is_track,
@@ -508,13 +561,10 @@ def embed_meta():
             "description": description,
         }
     )
-    return _corsify(response)
 
 
-@app.route("/scrape-status", methods=["GET", "OPTIONS"])
+@app.route("/scrape-status", methods=["GET"])
 def scrape_status():
-    if request.method == "OPTIONS":
-        return _corsify(app.response_class(status=204))
     start_arg = request.args.get("start")
     end_arg = request.args.get("end")
     today = _today()
@@ -522,18 +572,16 @@ def scrape_status():
     start = parse_date(start_arg, allow_none=True) if start_arg else default_start
     end = parse_date(end_arg, allow_none=True) if end_arg else today
     if not start or not end or start > end:
-        return _corsify(jsonify({"error": "Invalid start/end date"})), 400
+        return jsonify({"error": "Invalid start/end date"}), 400
 
     status = scrape_status_for_range(start, end)
     scraped = [day for day, is_scraped in status.items() if is_scraped]
     not_scraped = [day for day, is_scraped in status.items() if not is_scraped]
-    return _corsify(jsonify({"scraped": scraped, "not_scraped": not_scraped}))
+    return jsonify({"scraped": scraped, "not_scraped": not_scraped})
 
 
-@app.route("/reset-caches", methods=["POST", "OPTIONS"])
+@app.route("/reset-caches", methods=["POST"])
 def reset_caches():
-    if request.method == "OPTIONS":
-        return _corsify(app.response_class(status=204))
     data = request.get_json(silent=True) or {}
     clear_cache = bool(data.get("clear_cache", False))
     clear_viewed = bool(data.get("clear_viewed", False))
@@ -547,8 +595,10 @@ def reset_caches():
         # as readers/writers (CQ-30/PY-15).
         try:
             return json_store.delete_json(path)
-        except Exception as exc:
-            errors.append(f"{path.name}: {exc}")
+        except Exception:
+            # Generic body only (SEC-9); the exception detail goes to the log.
+            app.logger.exception("Failed to clear %s", path)
+            errors.append(f"Couldn't clear {path.name}.")
         return False
 
     if clear_cache:
@@ -564,13 +614,11 @@ def reset_caches():
         if _safe_unlink(STARRED_PATH):
             cleared.append(STARRED_PATH.name)
 
-    return _corsify(jsonify({"ok": True, "cleared": cleared, "errors": errors}))
+    return jsonify({"ok": True, "cleared": cleared, "errors": errors})
 
 
-@app.route("/clear-credentials", methods=["POST", "OPTIONS"])
+@app.route("/clear-credentials", methods=["POST"])
 def clear_credentials():
-    if request.method == "OPTIONS":
-        return _corsify(app.response_class(status=204))
     logs: list[str] = []
 
     def log(msg: str):
@@ -580,16 +628,16 @@ def clear_credentials():
     try:
         clear_gmail_credentials()
         log("Credentials cleared.")
-        return _corsify(jsonify({"ok": True, "logs": logs}))
-    except Exception as exc:
-        log(f"ERROR: {exc}")
-        return _corsify(jsonify({"error": str(exc), "logs": logs})), 500
+        return jsonify({"ok": True, "logs": logs})
+    except Exception:
+        app.logger.exception("Failed to clear credentials")
+        return jsonify(
+            {"error": "Couldn't clear credentials. See the server log for details.", "logs": logs}
+        ), 500
 
 
-@app.route("/load-credentials", methods=["POST", "OPTIONS"])
+@app.route("/load-credentials", methods=["POST"])
 def load_credentials():
-    if request.method == "OPTIONS":
-        return _corsify(app.response_class(status=204))
     logs: list[str] = []
 
     def log(msg: str):
@@ -598,38 +646,48 @@ def load_credentials():
 
     try:
         if "file" not in request.files:
-            return _corsify(jsonify({"error": "No file uploaded"})), 400
+            return jsonify({"error": "No file uploaded"}), 400
         file = request.files["file"]
         if not file.filename:
-            return _corsify(jsonify({"error": "Empty filename"})), 400
+            return jsonify({"error": "Empty filename"}), 400
         raw_json = file.read()
         if not raw_json:
-            return _corsify(jsonify({"error": "Uploaded file was empty"})), 400
+            return jsonify({"error": "Uploaded file was empty"}), 400
         save_gmail_client_config_json(raw_json.decode("utf-8"))
         clear_gmail_credentials(clear_client_config=False)
         log("Saved Gmail credentials to secure storage. Authenticating…")
         gmail_authenticate()
         log("Credentials uploaded and authenticated.")
-        return _corsify(jsonify({"ok": True, "logs": logs}))
+        return jsonify({"ok": True, "logs": logs})
     except UnicodeDecodeError:
-        return _corsify(
-            jsonify({"error": "Credentials file must be valid UTF-8 JSON", "logs": logs})
+        return jsonify({"error": "Credentials file must be valid UTF-8 JSON", "logs": logs}), 400
+    except ValueError:
+        # Includes JSON parse errors; keep the body generic (SEC-9).
+        app.logger.exception("Rejected credentials upload")
+        return jsonify(
+            {"error": "That file doesn't look like a Gmail credentials JSON file.", "logs": logs}
         ), 400
-    except ValueError as exc:
-        log(f"ERROR: {exc}")
-        return _corsify(jsonify({"error": str(exc), "logs": logs})), 400
-    except CredentialStoreError as exc:
-        log(f"ERROR: {exc}")
-        return _corsify(jsonify({"error": str(exc), "logs": logs})), 500
-    except Exception as exc:
-        log(f"ERROR: {exc}")
-        return _corsify(jsonify({"error": str(exc), "logs": logs})), 500
+    except CredentialStoreError:
+        app.logger.exception("Secure storage error while saving credentials")
+        return jsonify(
+            {
+                "error": "Couldn't save credentials to secure storage. "
+                "See the server log for details.",
+                "logs": logs,
+            }
+        ), 500
+    except Exception:
+        app.logger.exception("Failed to load credentials")
+        return jsonify(
+            {"error": "Couldn't load credentials. See the server log for details.", "logs": logs}
+        ), 500
 
 
-@app.route("/populate-range-stream", methods=["GET", "OPTIONS"])
+# NOTE: this SSE endpoint intentionally requires no custom header — EventSource
+# cannot set headers. It is protected by the before_request Host check, and a
+# populate run mutates nothing destructively (it only adds to local caches).
+@app.route("/populate-range-stream", methods=["GET"])
 def populate_range_stream():
-    if request.method == "OPTIONS":
-        return _corsify(app.response_class(status=204))
     start_arg = request.args.get("start") or request.args.get("from")
     end_arg = request.args.get("end") or start_arg
 
@@ -643,19 +701,16 @@ def populate_range_stream():
         try:
             max_results = int(raw_max)
         except (TypeError, ValueError):
-            return _corsify(jsonify({"error": "max_results must be an integer"})), 400
+            return jsonify({"error": "max_results must be an integer"}), 400
         if max_results < 1:
-            return _corsify(jsonify({"error": "max_results must be a positive integer"})), 400
+            return jsonify({"error": "max_results must be a positive integer"}), 400
         max_results = min(max_results, GMAIL_MAX_RESULTS_HARD)
 
     def error_stream(msg: str):
         def gen():
             yield f"event: error\ndata: {msg}\n\n"
 
-        headers = {
-            "Access-Control-Allow-Origin": "*",
-            "Cache-Control": "no-cache",
-        }
+        headers = {"Cache-Control": "no-cache"}
         app.logger.error(msg)
         return Response(stream_with_context(gen()), mimetype="text/event-stream", headers=headers)
 
@@ -733,10 +788,7 @@ def populate_range_stream():
             yield f"data: {safe}\n\n"
         yield "event: done\ndata: complete\n\n"
 
-    headers = {
-        "Access-Control-Allow-Origin": "*",
-        "Cache-Control": "no-cache",
-    }
+    headers = {"Cache-Control": "no-cache"}
     return Response(
         stream_with_context(event_stream()), mimetype="text/event-stream", headers=headers
     )
@@ -746,23 +798,28 @@ def populate_range_stream():
 # Provider configuration endpoints
 
 
-@app.route("/imap/discover", methods=["POST", "OPTIONS"])
+# Fixed user-facing messages for the IMAP endpoints (SEC-9): the underlying
+# exceptions embed raw server/socket/keyring text, which doubles as a host/port
+# oracle — details go to the server log only.
+_IMAP_AUTH_FAILED_MSG = "Couldn't sign in to the IMAP server. Check your settings and password."
+_IMAP_CONNECT_FAILED_MSG = "Couldn't talk to the IMAP server. Check the host and port."
+_SECURE_STORAGE_MSG = "Couldn't access secure storage. See the server log for details."
+
+
+@app.route("/imap/discover", methods=["POST"])
 def imap_discover():
     """Authenticate with IMAP and return available folders for selection."""
-    if request.method == "OPTIONS":
-        return _corsify(app.response_class(status=204))
-
     try:
         data = request.get_json(silent=True) or {}
         saved_config = load_provider_config().get("imap_config", {})
         imap = _build_imap_config(data.get("imap_config"), saved_config)
 
         if not imap["host"]:
-            return _corsify(jsonify({"error": "IMAP host is required."})), 400
+            return jsonify({"error": "IMAP host is required."}), 400
         if not imap["username"]:
-            return _corsify(jsonify({"error": "IMAP username is required."})), 400
+            return jsonify({"error": "IMAP username is required."}), 400
         if not imap["password"]:
-            return _corsify(jsonify({"error": "Enter your IMAP password to load folders."})), 400
+            return jsonify({"error": "Enter your IMAP password to load folders."}), 400
 
         client = None
         try:
@@ -772,28 +829,31 @@ def imap_discover():
             if client is not None:
                 client.close()
 
-        return _corsify(
-            jsonify(
-                {
-                    "folders": folders,
-                    "recommended_folder": recommended_folder,
-                }
-            )
+        return jsonify(
+            {
+                "folders": folders,
+                "recommended_folder": recommended_folder,
+            }
         )
-    except CredentialStoreError as exc:
-        return _corsify(jsonify({"error": str(exc)})), 500
-    except (AuthenticationError, ProviderError, ValueError) as exc:
-        return _corsify(jsonify({"error": str(exc)})), 400
-    except Exception as exc:
-        return _corsify(jsonify({"error": f"Failed to load IMAP folders: {exc}"})), 500
+    except CredentialStoreError:
+        app.logger.exception("Secure storage error during IMAP folder discovery")
+        return jsonify({"error": _SECURE_STORAGE_MSG}), 500
+    except AuthenticationError:
+        app.logger.exception("IMAP authentication failed during folder discovery")
+        return jsonify({"error": _IMAP_AUTH_FAILED_MSG}), 400
+    except (ProviderError, ValueError):
+        app.logger.exception("IMAP error during folder discovery")
+        return jsonify({"error": _IMAP_CONNECT_FAILED_MSG}), 400
+    except Exception:
+        app.logger.exception("Failed to load IMAP folders")
+        return jsonify(
+            {"error": "Couldn't load IMAP folders. See the server log for details."}
+        ), 500
 
 
-@app.route("/provider-config", methods=["GET", "POST", "OPTIONS"])
+@app.route("/provider-config", methods=["GET", "POST"])
 def provider_config():
     """Get or update the email provider configuration."""
-    if request.method == "OPTIONS":
-        return _corsify(app.response_class(status=204))
-
     if request.method == "GET":
         config = load_provider_config()
         # Don't expose password in GET response
@@ -814,7 +874,7 @@ def provider_config():
             },
             "has_gmail_credentials": gmail_credentials_configured(),
         }
-        return _corsify(jsonify(safe_config))
+        return jsonify(safe_config)
 
     # POST: Save config
     try:
@@ -826,15 +886,18 @@ def provider_config():
 
         if "imap_config" in data:
             existing_imap = config.get("imap_config", {})
+            # _build_imap_config only reuses the stored IMAP password when the
+            # posted connection signature matches the saved config — stored
+            # credentials are never combined with request-supplied targets.
             imap = _build_imap_config(data["imap_config"], existing_imap)
             if not imap["host"]:
-                raise ValueError("IMAP host is required.")
+                return jsonify({"error": "IMAP host is required."}), 400
             if not imap["username"]:
-                raise ValueError("IMAP username is required.")
+                return jsonify({"error": "IMAP username is required."}), 400
             if not imap["password"]:
-                raise ValueError("IMAP password is required.")
+                return jsonify({"error": "IMAP password is required."}), 400
             if not imap["folder"]:
-                raise ValueError("Choose an IMAP folder to scan before saving.")
+                return jsonify({"error": "Choose an IMAP folder to scan before saving."}), 400
 
             client = None
             try:
@@ -846,11 +909,21 @@ def provider_config():
             config["imap_config"] = imap
 
         save_provider_config(config)
-        return _corsify(jsonify({"ok": True}))
-    except CredentialStoreError as exc:
-        return _corsify(jsonify({"error": str(exc)})), 500
-    except (AuthenticationError, ProviderError, ValueError) as exc:
-        return _corsify(jsonify({"error": str(exc)})), 400
+        return jsonify({"ok": True})
+    except CredentialStoreError:
+        app.logger.exception("Secure storage error while saving provider config")
+        return jsonify({"error": _SECURE_STORAGE_MSG}), 500
+    except AuthenticationError:
+        app.logger.exception("IMAP authentication failed while saving provider config")
+        return jsonify({"error": _IMAP_AUTH_FAILED_MSG}), 400
+    except (ProviderError, ValueError):
+        app.logger.exception("IMAP error while saving provider config")
+        return jsonify({"error": _IMAP_CONNECT_FAILED_MSG}), 400
+    except Exception:
+        app.logger.exception("Failed to save provider config")
+        return jsonify(
+            {"error": "Couldn't save the provider settings. See the server log for details."}
+        ), 500
 
 
 if __name__ == "__main__":

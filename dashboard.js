@@ -4,6 +4,20 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
   .catch(() => ({}));
 
 (async () => {
+  // Anti-CSRF wrapper (WP-08/SEC-11): the server rejects any state-mutating
+  // request that lacks the X-BCFeed-Request header. Cross-site pages cannot
+  // set custom headers, so this blocks drive-by CSRF. Shadowing the global
+  // fetch inside this IIFE guarantees every request in the app — including
+  // the provider/IMAP settings controller's POSTs — carries the header on
+  // non-GET methods. (EventSource stays header-free by design; the server's
+  // Host check protects the SSE endpoint.)
+  const fetch = (input, options = {}) => {
+    const method = (options.method || "GET").toUpperCase();
+    if (method === "GET" || method === "HEAD") return window.fetch(input, options);
+    const headers = new Headers(options.headers || {});
+    headers.set("X-BCFeed-Request", "1");
+    return window.fetch(input, { ...options, headers });
+  };
   let releases = [];
   const releaseMap = new Map();
   let embedProxyUrl = "http://localhost:5050/embed-meta";
