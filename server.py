@@ -53,6 +53,7 @@ from pipeline import MaxResultsExceeded, populate_release_cache
 from provider_factory import get_current_provider_type, load_provider_config, save_provider_config
 from session_store import get_full_release_cache, scrape_status_for_range
 from util import parse_date
+from util import today as _today
 
 app = Flask(__name__)
 
@@ -183,9 +184,14 @@ class QuietHealthHandler(WSGIRequestHandler):
         super().log_request(code, size)
 
 
+# bcfeed is a single-user local app: bind loopback only so the API (which has
+# no authentication) is never reachable from the LAN. See SEC-1.
+BIND_HOST = "127.0.0.1"
+
+
 def start_server(port: int = 5050):
     """Start the server in a background thread and return (server, thread)."""
-    server = make_server("0.0.0.0", port, app, threaded=True, request_handler=QuietHealthHandler)
+    server = make_server(BIND_HOST, port, app, threaded=True, request_handler=QuietHealthHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, thread
@@ -194,10 +200,10 @@ def start_server(port: int = 5050):
 def find_free_port(preferred: int = 5050) -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         try:
-            sock.bind(("", preferred))
+            sock.bind((BIND_HOST, preferred))
             return preferred
         except OSError:
-            sock.bind(("", 0))
+            sock.bind((BIND_HOST, 0))
             return sock.getsockname()[1]
 
 
@@ -532,7 +538,7 @@ def scrape_status():
         return _corsify(app.response_class(status=204))
     start_arg = request.args.get("start")
     end_arg = request.args.get("end")
-    today = datetime.date.today()
+    today = _today()
     default_start = today - datetime.timedelta(days=60)
     start = parse_date(start_arg, allow_none=True) if start_arg else default_start
     end = parse_date(end_arg, allow_none=True) if end_arg else today
@@ -848,4 +854,4 @@ def provider_config():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5050))
-    app.run(host="0.0.0.0", port=port, threaded=True)
+    app.run(host=BIND_HOST, port=port, threaded=True)

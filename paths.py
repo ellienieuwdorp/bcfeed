@@ -1,25 +1,37 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
-def get_data_dir() -> Path:
+def _resolve_base_dir() -> Path:
     """
-    Return a writable data directory for caches/settings.
-    On macOS, prefer ~/Library/Application Support/bcfeed.
-    Otherwise, fall back to a hidden folder in the user's home.
+    Return the data directory location WITHOUT creating it.
+
+    Honors the ``BCFEED_DATA_DIR`` environment variable (used by tests to
+    isolate state into a temp dir). Otherwise, on macOS prefer
+    ~/Library/Application Support/bcfeed; elsewhere fall back to ~/.bcfeed.
     """
+    override = os.environ.get("BCFEED_DATA_DIR")
+    if override:
+        return Path(override).expanduser()
     home = Path.home()
     app_support = home / "Library" / "Application Support" / "bcfeed"
     if app_support.parent.exists():  # likely macOS
-        base = app_support
-    else:
-        base = home / ".bcfeed"
+        return app_support
+    return home / ".bcfeed"
+
+
+def get_data_dir() -> Path:
+    """Return the data directory, creating it on first use."""
+    base = _resolve_base_dir()
     base.mkdir(parents=True, exist_ok=True)
     return base
 
 
-DATA_DIR = get_data_dir()
+# Path constants are resolved at import (no directory side effect); the dir is
+# created lazily by get_data_dir()/writers. Tests set BCFEED_DATA_DIR before import.
+DATA_DIR = _resolve_base_dir()
 GMAIL_CREDENTIALS_FILE = "credentials.json"
 GMAIL_TOKEN_FILE = "token.pickle"
 VIEWED_PATH = DATA_DIR / "viewed_state.json"

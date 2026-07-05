@@ -3,6 +3,16 @@ from collections.abc import Iterable
 from email.utils import parsedate_to_datetime
 
 
+def today() -> datetime.date:
+    """Return the current local date.
+
+    Single choke point for "now" so tests can freeze it and every caller
+    agrees on the same day boundary (the pervasive exclude-today logic
+    depends on this being consistent within a run).
+    """
+    return datetime.date.today()
+
+
 def parse_date(val, *, allow_none: bool = False) -> datetime.date | None:
     """Parse an ISO (YYYY-MM-DD) or RFC 2822 date string into a date."""
     if val is None:

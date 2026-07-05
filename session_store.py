@@ -16,6 +16,7 @@ from pathlib import Path
 
 from paths import EMPTY_DATES_PATH, RELEASE_CACHE_PATH, SCRAPE_STATUS_PATH
 from util import dedupe_by_url
+from util import today as _today
 
 CacheType = dict[str, list[dict]]
 
@@ -71,7 +72,7 @@ def _save_date_set(path: Path, dates: set[datetime.date], *, drop_today: bool = 
     _ensure_cache_dir()
     tmp_path = path.with_suffix(".tmp")
     if drop_today:
-        today = datetime.date.today()
+        today = _today()
         # Always treat today as not-scraped.
         if today in dates:
             dates = set(dates)
@@ -131,7 +132,7 @@ def mark_dates_scraped(dates: Iterable[datetime.date], *, exclude_today: bool = 
     Mark specific dates as having been scraped from Gmail.
     """
     scraped = _load_scrape_status()
-    today = datetime.date.today()
+    today = _today()
     for day in dates:
         if not isinstance(day, datetime.date):
             continue
@@ -148,7 +149,7 @@ def mark_date_range_scraped(
     if start > end:
         return
     scraped = _load_scrape_status()
-    today = datetime.date.today()
+    today = _today()
     cursor = start
     one_day = datetime.timedelta(days=1)
     while cursor <= end:
@@ -174,7 +175,7 @@ def scrape_status_for_range(start: datetime.date, end: datetime.date) -> dict[st
     """
     status = {}
     scraped = _load_scrape_status()
-    today = datetime.date.today()
+    today = _today()
     cursor = start
     one_day = datetime.timedelta(days=1)
     while cursor <= end:
@@ -191,7 +192,7 @@ def persist_release_metadata(releases: Iterable[dict], *, exclude_today: bool = 
     """
     cache = _load_cache()
     empty_dates = _load_empty_dates()
-    today = datetime.date.today()
+    today = _today()
     scraped_days: set[datetime.date] = set()
     for release in releases:
         day = _to_date(release.get("date"))
@@ -268,7 +269,7 @@ def persist_empty_date_range(
     if start > end:
         return
     empty_dates = _load_empty_dates()
-    today = datetime.date.today()
+    today = _today()
     cursor = start
     one_day = datetime.timedelta(days=1)
     while cursor <= end:
