@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import datetime
 import html
-import json
 import os
 import socket
 import threading
@@ -18,6 +17,7 @@ from flask import Flask, Response, jsonify, render_template, request, send_file,
 from markdown_it import MarkdownIt
 from werkzeug.serving import WSGIRequestHandler, make_server
 
+import json_store
 from bandcamp import build_embed_url, extract_bandcamp_description, extract_bc_meta
 from credential_store import (
     CredentialStoreError,
@@ -92,56 +92,38 @@ def _corsify(response):
     return response
 
 
-def _load_set(path: Path) -> set[str]:
-    if not path.exists():
-        return set()
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return set(data) if isinstance(data, list) else set()
-    except Exception:
-        return set()
+# All store persistence goes through json_store (ARC-2a): one locked, atomic
+# implementation instead of the former per-module duplicates (CQ-18/PY-15).
+def _load_url_set(path: Path) -> set[str]:
+    data = json_store.read_json(path, [])
+    return set(data) if isinstance(data, list) else set()
 
 
-def _save_set(path: Path, items: set[str]) -> None:
-    tmp = path.with_suffix(".tmp")
-    tmp.parent.mkdir(parents=True, exist_ok=True)
-    tmp.write_text(json.dumps(sorted(items)), encoding="utf-8")
-    try:
-        tmp.replace(path)
-    except FileNotFoundError:
-        path.write_text(json.dumps(sorted(items)), encoding="utf-8")
+def _set_url_flag(path: Path, url: str, flagged: bool) -> None:
+    """Add/remove one URL in a set-store atomically (load-mutate-save locked)."""
+
+    def mutator(data):
+        items = set(data) if isinstance(data, list) else set()
+        if flagged:
+            items.add(url)
+        else:
+            items.discard(url)
+        return sorted(items)
+
+    json_store.update_json(path, mutator, [])
 
 
 def _load_viewed() -> set[str]:
-    return _load_set(VIEWED_PATH)
-
-
-def _save_viewed(items: set[str]) -> None:
-    _save_set(VIEWED_PATH, items)
+    return _load_url_set(VIEWED_PATH)
 
 
 def _load_starred() -> set[str]:
-    return _load_set(STARRED_PATH)
-
-
-def _save_starred(items: set[str]) -> None:
-    _save_set(STARRED_PATH, items)
+    return _load_url_set(STARRED_PATH)
 
 
 def _load_embed_cache() -> dict:
-    if not EMBED_CACHE_PATH.exists():
-        return {}
-    try:
-        return json.loads(EMBED_CACHE_PATH.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return {}
-
-
-def _save_embed_cache(cache: dict) -> None:
-    EMBED_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = EMBED_CACHE_PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(cache, indent=2), encoding="utf-8")
-    tmp.replace(EMBED_CACHE_PATH)
+    data = json_store.read_json(EMBED_CACHE_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 def _save_embed_metadata(
@@ -149,24 +131,31 @@ def _save_embed_metadata(
 ) -> None:
     if not url:
         return
-    cache = _load_embed_cache()
-    existing = cache.get(url, {}) if isinstance(cache, dict) else {}
-    merged = {
-        "release_id": existing.get("release_id"),
-        "is_track": existing.get("is_track"),
-        "embed_url": existing.get("embed_url"),
-        "description": existing.get("description"),
-    }
-    if release_id is not None:
-        merged["release_id"] = release_id
-    if is_track is not None:
-        merged["is_track"] = is_track
-    if embed_url is not None:
-        merged["embed_url"] = embed_url
-    if description is not None:
-        merged["description"] = description
-    cache[url] = merged
-    _save_embed_cache(cache)
+
+    def mutator(cache):
+        if not isinstance(cache, dict):
+            cache = {}
+        existing = cache.get(url)
+        if not isinstance(existing, dict):
+            existing = {}
+        merged = {
+            "release_id": existing.get("release_id"),
+            "is_track": existing.get("is_track"),
+            "embed_url": existing.get("embed_url"),
+            "description": existing.get("description"),
+        }
+        if release_id is not None:
+            merged["release_id"] = release_id
+        if is_track is not None:
+            merged["is_track"] = is_track
+        if embed_url is not None:
+            merged["embed_url"] = embed_url
+        if description is not None:
+            merged["description"] = description
+        cache[url] = merged
+        return cache
+
+    json_store.update_json(EMBED_CACHE_PATH, mutator, {}, indent=2)
 
 
 @app.route("/health", methods=["GET", "OPTIONS"])
@@ -226,12 +215,7 @@ def viewed_state():
     read = data.get("read")
     if not url or not isinstance(read, bool):
         return _corsify(jsonify({"error": "Missing url or read flag"})), 400
-    items = _load_viewed()
-    if read:
-        items.add(url)
-    else:
-        items.discard(url)
-    _save_viewed(items)
+    _set_url_flag(VIEWED_PATH, url, read)
     return _corsify(jsonify({"ok": True}))
 
 
@@ -274,12 +258,7 @@ def starred_state():
     starred = data.get("starred")
     if not url or not isinstance(starred, bool):
         return _corsify(jsonify({"error": "Missing url or starred flag"})), 400
-    items = _load_starred()
-    if starred:
-        items.add(url)
-    else:
-        items.discard(url)
-    _save_starred(items)
+    _set_url_flag(STARRED_PATH, url, starred)
     return _corsify(jsonify({"ok": True}))
 
 
@@ -564,12 +543,12 @@ def reset_caches():
     errors = []
 
     def _safe_unlink(path: Path):
-        if path.exists():
-            try:
-                path.unlink()
-                return True
-            except Exception as exc:
-                errors.append(f"{path.name}: {exc}")
+        # Delete through json_store so removal holds the same per-store lock
+        # as readers/writers (CQ-30/PY-15).
+        try:
+            return json_store.delete_json(path)
+        except Exception as exc:
+            errors.append(f"{path.name}: {exc}")
         return False
 
     if clear_cache:
@@ -691,46 +670,51 @@ def populate_range_stream():
     if not POPULATE_LOCK.acquire(blocking=False):
         return error_stream("Another populate is already running")
 
-    def event_stream():
-        q: SimpleQueue[str | None] = SimpleQueue()
+    q: SimpleQueue[str | None] = SimpleQueue()
 
-        def log(msg: str):
-            q.put(str(msg))
+    def log(msg: str):
+        q.put(str(msg))
 
-        def worker():
-            try:
-                populate_release_cache(
-                    start.strftime("%Y-%m-%d"),
-                    end.strftime("%Y-%m-%d"),
-                    max_results,
-                    batch_size=20,
-                    log=log,
-                )
-                q.put("Populate completed.")
-            except GmailAuthError as exc:
-                q.put(f"ERROR: {exc}")
-            except MaxResultsExceeded as exc:
-                q.put(f"Maximum results reached ({exc.found}/{exc.max_results}).")
-            except (AuthenticationError, ProviderError) as exc:
-                q.put(f"ERROR: {exc}")
-            except Exception as exc:
-                q.put(f"ERROR: Unexpected error: {exc}")
-            finally:
-                q.put(None)
-
-        thread = threading.Thread(target=worker, daemon=True)
-        thread.start()
-
+    def worker():
+        # The worker owns POPULATE_LOCK for its whole lifetime (JS-10 server
+        # half): on client disconnect the SSE generator below is torn down
+        # while this thread keeps running, so releasing the lock there would
+        # let a second populate start concurrently. The lock is acquired in
+        # the request thread above and released here when the work is done.
         try:
-            while True:
-                item = q.get()
-                if item is None:
-                    break
-                safe = str(item).replace("\n", " ")
-                yield f"data: {safe}\n\n"
-            yield "event: done\ndata: complete\n\n"
+            populate_release_cache(
+                start.strftime("%Y-%m-%d"),
+                end.strftime("%Y-%m-%d"),
+                max_results,
+                batch_size=20,
+                log=log,
+            )
+            q.put("Populate completed.")
+        except GmailAuthError as exc:
+            q.put(f"ERROR: {exc}")
+        except MaxResultsExceeded as exc:
+            q.put(f"Maximum results reached ({exc.found}/{exc.max_results}).")
+        except (AuthenticationError, ProviderError) as exc:
+            q.put(f"ERROR: {exc}")
+        except Exception as exc:
+            q.put(f"ERROR: Unexpected error: {exc}")
         finally:
             POPULATE_LOCK.release()
+            q.put(None)
+
+    # Start the worker before handing the response back: its lifetime (and the
+    # lock's) must not depend on whether the client ever reads the stream.
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+
+    def event_stream():
+        while True:
+            item = q.get()
+            if item is None:
+                break
+            safe = str(item).replace("\n", " ")
+            yield f"data: {safe}\n\n"
+        yield "event: done\ndata: complete\n\n"
 
     headers = {
         "Access-Control-Allow-Origin": "*",
