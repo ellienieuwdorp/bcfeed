@@ -2,9 +2,9 @@
 
 ## Introduction
 
-**bcfeed** is a Python app that generates a dashboard of releases from your Bandcamp release notification emails. 
+**bcfeed** is a local macOS app that turns your Bandcamp "New release from..." notification emails into a browsable dashboard of releases.
 
-It works by searching your configured email account within a given date range for any "New release from..." emails from Bandcamp, then populating a local database of releases.
+It works by searching your configured email account within a given date range for Bandcamp release notification emails, then saving the release details locally so you can sort, filter, and preview them.
 
 You can connect either:
 
@@ -14,7 +14,10 @@ You can connect either:
 
 ## Setup
 
-See [SETUP.md](SETUP.md)
+See [SETUP.md](SETUP.md) to install and run **bcfeed**. Once it's running, set up an email provider:
+
+- Gmail API (OAuth): [GMAIL_SETUP.md](GMAIL_SETUP.md)
+- IMAP: [IMAP_SETUP.md](IMAP_SETUP.md)
 
 
 ## Workflow
@@ -22,7 +25,7 @@ See [SETUP.md](SETUP.md)
 **A typical workflow would be:**
 
 1) **Select a date range to populate**, e.g. the whole of last December. 
-2) Click **"Populate release list"**. This searches your configured provider for Bandcamp release notifications within the specified date range and populates the database.
+2) Click **"Populate release list"**. This searches your configured provider for Bandcamp release notifications within the specified date range and saves the results locally.
 3) Now you can do one of three things:
   - **Browse straight away** - this works! However, this is likely to be slow – the data for each release needs to be loaded from each Bandcamp page individually, which takes a few seconds any time you click on a release. For a more enjoyable UX, you can
   - Click **"Preload release data"** and then browse: this preloads the release info and BC player widgets for all releases in the selected date range for faster browsing, but may take a while for larger date ranges. Or you can
@@ -32,7 +35,7 @@ See [SETUP.md](SETUP.md)
 
 ## Notes
 
-Once you've populated (or browsed) a date range from your mailbox once, you don't have to do it again. Each line in the database corresponds to an *email* in your inbox. So if you've already populated a date range in the past, that's all the releases (emails) you'll ever see in that date range.
+Once you've fetched (or browsed) a date range from your mailbox once, you don't have to do it again. Each line in the saved list corresponds to an *email* in your inbox. So if you've already fetched a date range in the past, that's all the releases (emails) you'll ever see in that date range.
 
 Releases with preloaded release data and player widgets are marked with a blue "CACHED" badge.
 
@@ -47,16 +50,16 @@ Sensitive Gmail OAuth material, Gmail tokens, and IMAP passwords managed by **bc
 
 Make sure to read the bit above about pre-loading releases.
 
-Typically it's pretty quick to populate the database from Gmail, a few hundred emails should take a few seconds. IMAP accounts can take a bit longer and be provider dependant, though ~100 emails should typically not take much longer than a minute. However, Bandcamp release notification emails only contain basic metadata (artist, title, label/page, Bandcamp URL). Fetching the Bandcamp player widget and release info requires scraping the Bandcamp page for each release, which is much slower (a few seconds per release). Naturally, you are also at the mercy of the Bandcamp servers at any given moment – it's not uncommon for them to slow to a crawl.
+Typically it's pretty quick to fetch releases from Gmail, a few hundred emails should take a few seconds. IMAP accounts can take a bit longer and be provider dependant, though ~100 emails should typically not take much longer than a minute. However, Bandcamp release notification emails only contain basic metadata (artist, title, label/page, Bandcamp URL). Fetching the Bandcamp player widget and release info requires scraping the Bandcamp page for each release, which is much slower (a few seconds per release). Naturally, you are also at the mercy of the Bandcamp servers at any given moment – it's not uncommon for them to slow to a crawl.
 
 In general it's better to pre-load the releases, either using the "Preload" button on the left side or by starring them.
 
-The good news is that **bcfeed** caches the release database, release info and Bandcamp player widgets locally and these persist across **bcfeed** sessions, so you only need to preload once for any given release.
+The good news is that **bcfeed** saves the release list, release info and Bandcamp player widgets locally and these persist across **bcfeed** sessions, so you only need to preload once for any given release.
 
 
 ## Requirements
 
-**bcfeed** has only been tested on OS X 13.4 and Chrome. It probably works on other OS X versions. It may or may not work on other browsers. It probably won't work on Windows, but feel free to try.
+**bcfeed** has mainly been tested on recent macOS and Chrome. It probably works on other macOS versions. It may or may not work on other browsers. It probably won't work on Windows, but feel free to try.
 
 **bcfeed** supports:
 - Gmail accounts via the Gmail API and your own OAuth client
@@ -67,11 +70,9 @@ Some IMAP providers require IMAP to be enabled and/or an app-specific password. 
 
 ## Privacy
 
-This application runs on your local machine. The application does not collect, transmit, store, or share your data with the author or any third party. Gmail API access and IMAP access are performed locally using credentials that you create and control. Sensitive Gmail OAuth material, Gmail tokens, and IMAP passwords managed by **bcfeed** are stored securely in your system keychain. Email data retrieved by the application is processed only in memory or stored locally on your device, depending on your configuration. No analytics, telemetry, usage tracking, or remote logging is included; any cached email-derived data remains entirely on your local machine.
+**bcfeed** runs entirely on your local machine. It collects no analytics or telemetry, and the author never has access to your credentials or email data. For the full details, see [privacy.md](privacy.md).
 
-The author of this software never has access to your OAuth credentials, access tokens, refresh tokens, IMAP passwords, or email data.
 
-If you use the Gmail provider, you may revoke the application’s access to your Google account at any time via:
-https://myaccount.google.com/permissions
+## License
 
-This software is provided as-is for personal use. You are responsible for complying with your email provider’s terms when creating and using OAuth credentials, IMAP passwords, or app-specific passwords.
+**bcfeed** is released under the MIT License. See [LICENSE](LICENSE).

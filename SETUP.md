@@ -1,6 +1,6 @@
-# bcfeed
+# bcfeed — installation & setup
 
-A macOS desktop app that reads Bandcamp release emails from your email account, caches them locally, and generates an interactive dashboard of releases that is much easier to browse.
+How to install and run **bcfeed**. For what it does and how to use it, see [README.md](README.md).
 
 ## Installation
 
@@ -37,7 +37,7 @@ You must keep the Terminal window open in the background in order to use **bcfee
 If you're familiar with Python and CLI tools, you can create a virtual environment, install the dependencies and run the script from the CLI:
 
 - Download **bcfeed** source code
-- Ensure Python 3.10 or newer is installed and selected as the local python version
+- Ensure Python 3.11 or newer is installed and selected as the local python version
 - In the project directory, run `virtualenv .venv`
 - Run `source .venv/bin/activate`
 - Download dependencies: `pip install -r requirements.txt`

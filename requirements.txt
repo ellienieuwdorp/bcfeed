@@ -1,9 +1,12 @@
-google-api-python-client
-google-auth-oauthlib
-requests
-bs4
-flask
-furl
-keyring
-markdown-it-py
-linkify-it-py
+# Runtime dependencies, pinned to the versions bcfeed is developed and tested against.
+# Homebrew formula note: the formula must gain keyring, markdown-it-py, and
+# linkify-it-py (added with keychain storage and the docs renderer) at the next release.
+google-api-python-client==2.198.0
+google-auth-oauthlib==1.4.0
+requests==2.34.2
+beautifulsoup4==4.15.0
+flask==3.1.3
+furl==2.1.4
+keyring==25.7.0
+markdown-it-py==4.2.0
+linkify-it-py==2.1.0
