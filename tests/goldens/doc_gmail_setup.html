@@ -1,0 +1,118 @@
+<h2>📘 Gmail Setup Guide</h2>
+<p>This application uses the Gmail API.
+To keep your data private and avoid Google’s OAuth verification requirements, <strong>you must create your own Google Cloud OAuth client</strong>.
+This setup is required only once and takes a few minutes.</p>
+<hr />
+<h3>1. Create a Google Cloud Project</h3>
+<ol>
+<li>Open: <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">https://console.cloud.google.com/projectcreate</a></li>
+<li>Sign in with the Gmail account you use for Bandcamp.</li>
+<li>Enter a project name: <strong>bcfeed</strong></li>
+<li>Click <strong>Create</strong></li>
+</ol>
+<hr />
+<h3>2. Enable the Gmail API</h3>
+<ol>
+<li>Go to: <a href="https://console.cloud.google.com/apis/library/gmail.googleapis.com" target="_blank" rel="noopener">https://console.cloud.google.com/apis/library/gmail.googleapis.com</a></li>
+<li>Click <strong>Enable</strong></li>
+</ol>
+<hr />
+<h3>3. Configure the OAuth Consent Screen</h3>
+<ol>
+<li>Go to: <a href="https://console.cloud.google.com/auth/overview?project=bcfeed" target="_blank" rel="noopener">https://console.cloud.google.com/auth/overview?project=bcfeed</a></li>
+<li>Click <strong>Get Started</strong> to configure Google Auth Platform</li>
+<li>Fill in:
+<ul>
+<li><strong>App name:</strong> bcfeed</li>
+<li><strong>User support email:</strong> your email</li>
+<li>Click <strong>Next</strong>.</li>
+</ul>
+</li>
+<li>Audience:
+<ul>
+<li>Select <strong>External</strong>.</li>
+<li>Click <strong>Next</strong>.</li>
+</ul>
+</li>
+<li>Contact information – fill in:
+<ul>
+<li><strong>Email addresses:</strong> your email again</li>
+<li>Click <strong>Next</strong>.</li>
+</ul>
+</li>
+<li>Finish
+<ul>
+<li>Agree to the <strong>Google API Services: User Data Policy</strong>.</li>
+<li>Click <strong>Continue</strong>.</li>
+</ul>
+</li>
+<li>Click <strong>Create</strong>.</li>
+</ol>
+<hr />
+<h3>4. Add Gmail read-only API scope</h3>
+<p>This allows the app to read your Gmail messages.</p>
+<ol>
+<li>From the left-hand menu, click <strong>Data Access</strong>.</li>
+<li>Click <strong>Add or remove scopes</strong>.</li>
+<li>Scroll down to Manually Add Scopes, then paste the following URL:
+<code>https://www.googleapis.com/auth/gmail.readonly</code> (no quotes)</li>
+<li>Click <strong>Add to table</strong>.</li>
+<li>Click <strong>Update</strong> to exit the dialog.</li>
+<li>At the bottom of the page, click <strong>Save</strong>.</li>
+</ol>
+<hr />
+<h3>5. Publish the App (&quot;In Production&quot;)</h3>
+<p>Publishing allows Google to issue long-lived refresh tokens for your personal use.</p>
+<ol>
+<li>On the left-hand menu, click <strong>Audience</strong>.</li>
+<li>Under Testing,click <strong>Publish App</strong></li>
+<li>Confirm the dialog</li>
+</ol>
+<p>You will see warnings that the app requires verification.
+<strong>This is normal and expected.</strong><br />
+Since this OAuth client is used <strong>only by you</strong>, verification is <strong>not required</strong>.</p>
+<hr />
+<h3>6. Create OAuth Client Credentials (Desktop App)</h3>
+<ol>
+<li>Go to: <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">https://console.cloud.google.com/apis/credentials</a></li>
+<li>Click <strong>Create Credentials → OAuth client ID</strong></li>
+<li>Application type: <strong>Desktop app</strong></li>
+<li>Click <strong>Create</strong></li>
+</ol>
+<p>Download the resulting JSON file, usually named:</p>
+<p><code>client_secret_XXXXXXXXX.json</code></p>
+<p>You will import this file into the application.</p>
+<p>Keep this file safe – if you ever need to clear and re-load your credentials, you can skip all the steps above if you still have this file somewhere.</p>
+<hr />
+<h3>7. Use the Credentials in This Application</h3>
+<ol>
+<li>Open this application</li>
+<li>Open <strong>Settings → Email Configuration</strong></li>
+<li>Set <strong>Provider</strong> to <strong>Gmail API (OAuth)</strong></li>
+<li>Click <strong>Load credentials file</strong> and choose the downloaded <code>client_secret_XXXX.json</code> file</li>
+<li>When prompted, continue with the Google sign-in flow in your browser</li>
+<li>You may see a warning saying <strong>Google hasn’t verified this app</strong>. If so, click <strong>Advanced</strong> and then <strong>Go to bcfeed (unsafe)</strong>.</li>
+<li>You will see a Google screen saying <strong>bcfeed wants access to your Google Account</strong>. Click <strong>Continue</strong>.</li>
+<li>The imported OAuth client details and your Gmail token will be stored securely in your system keychain so you will not need to log in again</li>
+</ol>
+<hr />
+<h2>Important small print</h2>
+<ul>
+<li>These credentials are <strong>for your personal use only</strong>. Do <strong>not</strong> share them.</li>
+<li>The app is not a public OAuth client because <strong>you</strong> own and control the credentials.</li>
+<li>Google allows unverified OAuth projects for personal/private use.</li>
+<li>This setup avoids the verification and security audit required for public apps using restricted Gmail scopes.</li>
+<li>You may revoke the app’s access at any time:<br />
+<a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">https://myaccount.google.com/permissions</a></li>
+</ul>
+<hr />
+<h2>Troubleshooting</h2>
+<p><strong>I see an “unverified app” warning.</strong><br />
+This is normal. Click <strong>Continue</strong>. The warning appears because only verified apps remove it, but personal-use apps do not require verification.</p>
+<p><strong>The app says my token expired.</strong><br />
+If you left your project in “Testing” mode, tokens expire after 7 days.<br />
+Publishing the app to <strong>In Production</strong> fixes this.</p>
+<p><strong>I get a 403 or insufficient permissions error.</strong><br />
+Make sure you enabled the Gmail API and used the downloaded OAuth file.</p>
+<p><strong>The app says secure credential storage is unavailable.</strong>
+<strong>bcfeed</strong> stores imported Gmail OAuth material and Gmail tokens in the system keychain. Make sure your machine has a supported keychain backend available.</p>

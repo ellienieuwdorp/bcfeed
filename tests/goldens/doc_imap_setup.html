@@ -1,0 +1,212 @@
+<h1>IMAP setup guide</h1>
+<p>Use this guide for <code>Settings -&gt; Email Configuration -&gt; Provider -&gt; IMAP</code>.</p>
+<p>Only iCloud has been tested so far. If you confirm another provider works, or hit a provider-specific issue, open an issue at <a href="https://github.com/keinobjekt/bcfeed/issues" target="_blank" rel="noopener">github.com/keinobjekt/bcfeed/issues</a>.</p>
+<p>bcfeed IMAP supports standard username/password login only. Providers that require OAuth2 / Modern Auth for IMAP are unsupported.</p>
+<ol>
+<li>Open <code>Settings</code>.</li>
+<li>Set <code>Provider</code> to <code>IMAP</code>.</li>
+<li>Enter the server, port, security mode, username, and password for your provider.</li>
+<li>Click <code>Connect &amp; load folders</code>.</li>
+<li>Choose the folder that contains your Bandcamp emails, or use <code>Enter folder manually</code>.</li>
+<li>Click <code>Save IMAP Configuration</code>.</li>
+</ol>
+<details>
+<summary>iCloud Mail</summary>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Details</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Status</td>
+<td>Tested</td>
+</tr>
+<tr>
+<td>Server</td>
+<td><code>imap.mail.me.com</code></td>
+</tr>
+<tr>
+<td>Port</td>
+<td><code>993</code></td>
+</tr>
+<tr>
+<td>Security</td>
+<td><code>SSL/TLS</code></td>
+</tr>
+<tr>
+<td>Username</td>
+<td>The Apple ID email address you use to login to your account</td>
+</tr>
+<tr>
+<td>Password</td>
+<td>Apple app-specific password</td>
+</tr>
+</tbody>
+</table>
+<p>Two-factor authentication is required before Apple will let you create an app-specific password. If you reset your Apple Account password, Apple revokes existing app-specific passwords and you will need to generate a new one.</p>
+<p>Docs: <a href="https://support.apple.com/en-euro/102525" target="_blank" rel="noopener">server settings</a>, <a href="https://support.apple.com/en-gu/102654" target="_blank" rel="noopener">app-specific passwords</a></p>
+</details>
+<details>
+<summary>Gmail</summary>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Details</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Status</td>
+<td>Untested</td>
+</tr>
+<tr>
+<td>Server</td>
+<td><code>imap.gmail.com</code></td>
+</tr>
+<tr>
+<td>Port</td>
+<td><code>993</code></td>
+</tr>
+<tr>
+<td>Security</td>
+<td><code>SSL/TLS</code></td>
+</tr>
+<tr>
+<td>Username</td>
+<td>Full Gmail address</td>
+</tr>
+<tr>
+<td>Password</td>
+<td>Google app password</td>
+</tr>
+</tbody>
+</table>
+<p>Google says IMAP is always on for personal Gmail now, so there is no personal-account IMAP toggle anymore. For Google Workspace accounts, Google no longer supports username/password access for third-party mail clients, so Gmail via bcfeed IMAP is unsupported there.</p>
+<p>Docs: <a href="https://support.google.com/mail/answer/7126229" target="_blank" rel="noopener">Gmail in another client</a>, <a href="https://support.google.com/accounts/answer/185833" target="_blank" rel="noopener">Google app passwords</a>, <a href="https://support.google.com/a/answer/9003945" target="_blank" rel="noopener">Workspace client setup</a></p>
+</details>
+<details>
+<summary>Yahoo Mail</summary>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Details</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Status</td>
+<td>Untested</td>
+</tr>
+<tr>
+<td>Server</td>
+<td><code>imap.mail.yahoo.com</code></td>
+</tr>
+<tr>
+<td>Port</td>
+<td><code>993</code></td>
+</tr>
+<tr>
+<td>Security</td>
+<td><code>SSL/TLS</code></td>
+</tr>
+<tr>
+<td>Username</td>
+<td>Full Yahoo address</td>
+</tr>
+<tr>
+<td>Password</td>
+<td>Yahoo app password</td>
+</tr>
+</tbody>
+</table>
+<p>Yahoo requires an app password for third-party mail apps.</p>
+<p>Docs: <a href="https://help.yahoo.com/kb/yahoo-mail-imap-settings-sln4075.html" target="_blank" rel="noopener">Yahoo IMAP settings</a>, <a href="https://help.yahoo.com/kb/account/confirm-delete-password-sln15241.html" target="_blank" rel="noopener">Yahoo app passwords</a></p>
+</details>
+<details>
+<summary>Fastmail</summary>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Details</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Status</td>
+<td>Untested</td>
+</tr>
+<tr>
+<td>Server</td>
+<td><code>imap.fastmail.com</code></td>
+</tr>
+<tr>
+<td>Port</td>
+<td><code>993</code></td>
+</tr>
+<tr>
+<td>Security</td>
+<td><code>SSL/TLS</code></td>
+</tr>
+<tr>
+<td>Username</td>
+<td>Full Fastmail username, including domain</td>
+</tr>
+<tr>
+<td>Password</td>
+<td>Fastmail app password</td>
+</tr>
+</tbody>
+</table>
+<p>Fastmail says regular account passwords do not work for third-party mail clients. Basic plans also do not include IMAP access or app passwords.</p>
+<p>Docs: <a href="https://www.fastmail.help/hc/en-us/articles/1500000278342-Server-names-and-ports" target="_blank" rel="noopener">server names and ports</a>, <a href="https://www.fastmail.help/hc/en-us/articles/360058752854-App-passwords" target="_blank" rel="noopener">app passwords</a></p>
+</details>
+<details>
+<summary>Outlook.com / Hotmail / Live</summary>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Details</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Status</td>
+<td>Unsupported</td>
+</tr>
+<tr>
+<td>Server</td>
+<td><code>outlook.office365.com</code></td>
+</tr>
+<tr>
+<td>Port</td>
+<td><code>993</code></td>
+</tr>
+<tr>
+<td>Security</td>
+<td><code>SSL/TLS</code></td>
+</tr>
+<tr>
+<td>Username</td>
+<td>Full Microsoft email address</td>
+</tr>
+<tr>
+<td>Password</td>
+<td>Microsoft account password or app password</td>
+</tr>
+</tbody>
+</table>
+<p>Microsoft documents <a href="http://Outlook.com" target="_blank" rel="noopener">Outlook.com</a> IMAP with OAuth2 / Modern Auth. bcfeed IMAP only supports standard username/password login, so <a href="http://Outlook.com" target="_blank" rel="noopener">Outlook.com</a>, Hotmail, and Live are unsupported here.</p>
+<p>Docs: <a href="https://support.microsoft.com/en-gb/office/pop-imap-and-smtp-settings-for-outlook-com-d088b986-291d-42b8-9564-9c414e2aa040" target="_blank" rel="noopener">Outlook.com IMAP settings</a>, <a href="https://support.microsoft.com/en-gb/account-billing/how-to-get-and-use-app-passwords-5896ed9b-4263-e681-128a-a6f2979a7944" target="_blank" rel="noopener">Microsoft app passwords</a></p>
+</details>
+<p>If your provider is not listed, use its official IMAP docs to find the server name, port, security mode, username format, and whether it requires an app password.</p>
+<h2>Troubleshooting</h2>
+<p>If login fails, double-check the server name, port, username, and security mode. If your provider uses two-factor authentication, you may need an app-specific password instead of your usual mailbox password.</p>
+<p>If you can connect but cannot save, run <code>Connect &amp; load folders</code> first, then choose a folder or enter one manually before saving.</p>
+<p>If secure credential storage is unavailable, bcfeed cannot save IMAP passwords. Make sure your machine has a supported system keychain backend available.</p>

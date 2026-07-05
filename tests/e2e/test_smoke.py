@@ -1,0 +1,136 @@
+"""WP-03b · ARC-7c Playwright smoke — the regression net for the do-not-break list.
+
+Drives the real app in headless Chromium against a seeded data dir and asserts
+the reachable "verified strengths": the fast table renders, a row expands, a
+star persists across a reload, a calendar day filters, the keyboard triage
+shortcuts (s / u) work, and every mutating request carries the anti-CSRF header.
+
+Runs headless in CI (the CI job installs Playwright + chromium). Locally, run it
+with the prebuilt Playwright venv and point the app subprocess at a Flask-capable
+interpreter, e.g.::
+
+    BCFEED_APP_PYTHON=/path/to/.venv/bin/python \
+        /path/to/pwvenv/bin/python -m pytest tests/e2e/test_smoke.py
+"""
+
+from __future__ import annotations
+
+
+def _mutating_header_log(page):
+    """Collect the anti-CSRF header seen on every mutating (non-GET) request."""
+    seen: list[tuple[str, str, str | None]] = []
+
+    def _on_request(req):
+        if req.method in ("GET", "HEAD"):
+            return
+        seen.append((req.method, req.url, req.headers.get("x-bcfeed-request")))
+
+    page.on("request", _on_request)
+    return seen
+
+
+def _row(page, url: str):
+    return page.locator(f'#release-rows tr.data-row[data-key="{url}"]')
+
+
+def test_smoke_do_not_break_list(page, app_server, seed_data):
+    header_log = _mutating_header_log(page)
+    url_a = seed_data["url_a"]
+    url_b = seed_data["url_b"]
+
+    page.goto(f"{app_server}/dashboard")
+
+    # 1. Dashboard loads and rows render (fast no-framework table).
+    page.wait_for_selector("#release-rows tr.data-row")
+    page.wait_for_function("document.querySelectorAll('#release-rows tr.data-row').length === 2")
+    assert _row(page, url_a).count() == 1
+    assert _row(page, url_b).count() == 1
+
+    # The seeded data dir has no configured provider, so the app shows its
+    # informational "no credentials" modal over the page. Dismiss it (as a user
+    # would) so it stops intercepting pointer events — the modal itself is not
+    # part of the do-not-break list under test here.
+    page.evaluate(
+        """() => {
+            const m = document.getElementById('missing-token-backdrop');
+            if (m) m.style.display = 'none';
+        }"""
+    )
+
+    # 2. Expand a row → a detail row with the cached embed iframe appears.
+    _row(page, url_a).click()
+    page.wait_for_function(
+        """(url) => {
+            const row = document.querySelector(`#release-rows tr.data-row[data-key="${url}"]`);
+            if (!row || !row.classList.contains('expanded')) return false;
+            const detail = row.nextElementSibling;
+            return !!(detail && detail.classList.contains('detail-row'));
+        }""",
+        arg=url_a,
+    )
+    page.wait_for_selector("tr.detail-row iframe")
+
+    # 3. Keyboard triage: expanding marked the row seen; 'u' restores unseen.
+    _row(page, url_a).focus()
+    page.keyboard.press("u")
+    page.wait_for_function(
+        """(url) => {
+            const row = document.querySelector(`#release-rows tr.data-row[data-key="${url}"]`);
+            return !!row && row.classList.contains('unseen');
+        }""",
+        arg=url_a,
+    )
+
+    # 4. Keyboard 's' stars the focused row.
+    _row(page, url_a).focus()
+    page.keyboard.press("s")
+    page.wait_for_function(
+        """(url) => {
+            const row = document.querySelector(`#release-rows tr.data-row[data-key="${url}"]`);
+            if (!row || !row.classList.contains('starred')) return false;
+            const btn = row.querySelector('[data-star-btn]');
+            return !!btn && btn.getAttribute('aria-pressed') === 'true';
+        }""",
+        arg=url_a,
+    )
+
+    # 5. The star persists across a full reload (server owns starred state).
+    page.reload()
+    page.wait_for_selector("#release-rows tr.data-row")
+    page.wait_for_function(
+        """(url) => {
+            const row = document.querySelector(`#release-rows tr.data-row[data-key="${url}"]`);
+            return !!row && row.classList.contains('starred');
+        }""",
+        arg=url_a,
+    )
+
+    # 6. A calendar day filters the table down to that day's release.
+    page.wait_for_function("document.querySelectorAll('#calendar-range .calendar-day').length > 0")
+    day_a = seed_data["date_a"].day
+    clicked = page.evaluate(
+        """(day) => {
+            const cells = [...document.querySelectorAll(
+                '#calendar-range .calendar-day:not(.other-month):not(.disabled)')];
+            const cell = cells.find(
+                (c) => c.querySelector('.date-label') &&
+                       c.querySelector('.date-label').textContent === String(day));
+            if (!cell) return false;
+            cell.click();
+            return true;
+        }""",
+        day_a,
+    )
+    assert clicked, "could not find the calendar cell for the seeded day"
+    page.wait_for_function("document.querySelectorAll('#release-rows tr.data-row').length === 1")
+    assert _row(page, url_a).count() == 1
+    assert _row(page, url_b).count() == 0
+
+    # 7. Every mutating request carried the anti-CSRF header (star-triggers-POST).
+    starred_posts = [h for (m, u, h) in header_log if "/starred-state" in u and m == "POST"]
+    assert starred_posts, "starring never issued a /starred-state POST"
+    assert all(h == "1" for h in starred_posts), (
+        f"a mutating request rode without the anti-CSRF header: {header_log}"
+    )
+    # No mutating request anywhere in the run was header-less.
+    assert all(h == "1" for (_m, _u, h) in header_log), header_log

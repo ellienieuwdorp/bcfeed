@@ -26,5 +26,33 @@ jobs:
       - name: Ruff format check
         run: ruff format --check .
 
-      - name: Pytest
-        run: pytest -q
+      # Unit suite only — kept fast and hermetic (no browser). The Playwright
+      # smoke lives in tests/e2e and runs in its own job below.
+      - name: Pytest (unit, excluding e2e)
+        run: pytest -q --ignore=tests/e2e
+
+  e2e-smoke:
+    # Second job (ARC-7b/7d): the Playwright browser smoke. Separate from the
+    # unit job so unit tests stay fast and need no browser. A single venv here
+    # has both the app deps (Flask etc.) and Playwright, so the smoke's app
+    # subprocess uses this interpreter (BCFEED_APP_PYTHON defaults to it).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies (app + test + Playwright)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+          pip install playwright==1.61.0
+
+      - name: Install Chromium for Playwright
+        run: python -m playwright install --with-deps chromium
+
+      - name: Playwright smoke
+        run: pytest -q tests/e2e

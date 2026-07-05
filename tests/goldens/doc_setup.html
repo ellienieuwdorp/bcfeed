@@ -1,0 +1,52 @@
+<h1>bcfeed — installation &amp; setup</h1>
+<p>How to install and run <strong>bcfeed</strong>. For what it does and how to use it, see <a href="readme" target="_blank" rel="noopener">README.md</a>.</p>
+<h2>Installation</h2>
+<h3>For power users (Homebrew already installed)</h3>
+<p>To install, open a Terminal and type the following:
+<code>brew tap keinobjekt/bcfeed</code>
+<code>brew install bcfeed</code></p>
+<p>Then to run simply type:
+<code>bcfeed</code></p>
+<p>This will launch the server from the Terminal and open the dashboard in your web browser. You must keep the Terminal window open in the background in order to use <strong>bcfeed</strong>.</p>
+<h3>For beginners</h3>
+<ol>
+<li>Download and install <strong>Homebrew</strong>: <a href="https://brew.sh" target="_blank" rel="noopener">https://brew.sh</a></li>
+<li>Use Homebrew to install <strong>bcfeed</strong>:
+<ul>
+<li>Open a Terminal window.</li>
+<li>Type <code>brew tap keinobjekt/bcfeed</code> and hit enter.</li>
+<li>Type <code>brew install bcfeed</code> and hit enter. This will begin the installation.</li>
+</ul>
+</li>
+</ol>
+<p>To run <strong>bcfeed</strong>:</p>
+<ul>
+<li>Type <code>bcfeed</code> into Terminal and hit enter</li>
+<li>This will launch the server from the Terminal and open the dashboard in your web browser.</li>
+</ul>
+<p>You only need to install <strong>bcfeed</strong> once.
+You must keep the Terminal window open in the background in order to use <strong>bcfeed</strong>.</p>
+<h3>Running from Python source (developers and advanced users)</h3>
+<p>If you're familiar with Python and CLI tools, you can create a virtual environment, install the dependencies and run the script from the CLI:</p>
+<ul>
+<li>Download <strong>bcfeed</strong> source code</li>
+<li>Ensure Python 3.11 or newer is installed and selected as the local python version</li>
+<li>In the project directory, run <code>virtualenv .venv</code></li>
+<li>Run <code>source .venv/bin/activate</code></li>
+<li>Download dependencies: <code>pip install -r requirements.txt</code></li>
+<li>Run <code>python3 bcfeed.py</code></li>
+</ul>
+<p>This will launch the server from the CLI and open the dashboard in your web browser.</p>
+<p>You must keep the CLI process running in order to use <strong>bcfeed</strong>.</p>
+<h2>Choose an email provider</h2>
+<p>Open <strong>Settings → Email Configuration</strong> after launching the app. <strong>bcfeed</strong> supports two provider types:</p>
+<ul>
+<li><strong>Gmail API (OAuth)</strong>: recommended if your Bandcamp mail lives in Gmail and you do not mind creating your own Google Cloud OAuth client.</li>
+<li><strong>IMAP</strong>: works with many providers, including Gmail, iCloud, Outlook, Fastmail, and other IMAP-compatible mailboxes.</li>
+</ul>
+<p>Sensitive Gmail OAuth material, Gmail tokens, and IMAP passwords managed by <strong>bcfeed</strong> are stored in your system keychain. Non-secret provider settings are stored locally in the app data directory.</p>
+<p>Provider-specific setup guides:</p>
+<ul>
+<li>Gmail API (OAuth): <a href="setup-gmail" target="_blank" rel="noopener">GMAIL_SETUP.md</a></li>
+<li>IMAP: <a href="setup-imap" target="_blank" rel="noopener">IMAP_SETUP.md</a></li>
+</ul>
