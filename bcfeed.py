@@ -15,7 +15,10 @@ SERVER_PORT = 5050
 
 def launch_dashboard(server_port: int, *, launch_browser: bool = True):
     """
-    Start the server and open the static dashboard, which will load releases from the server.
+    Open the dashboard in a browser tab, if requested.
+
+    The server is already started by the caller (``start_server_thread``); this
+    only opens ``/dashboard`` in the user's browser and returns (CQ-02).
     """
     if launch_browser:
         webbrowser.open_new_tab(f"http://localhost:{server_port}/dashboard")

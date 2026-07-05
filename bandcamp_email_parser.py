@@ -10,10 +10,13 @@ def parse_release_email(email_html: str | bytes | None, subject: str | None = No
     """
     Parse a Bandcamp release-notification email into lightweight release info.
 
-    Returns:
-        (img_url, release_url, is_track, artist_name, release_title, page_name)
+    Returns a 6-tuple:
+        (None, release_url, is_track, artist_name, release_title, page_name)
+
+    The leading slot is a reserved placeholder kept for tuple-shape stability;
+    artwork extraction is a later change (LOG-19). Nothing is parsed into it —
+    the old always-None field plumbing was removed here (CQ-32).
     """
-    img_url = None
     release_url = None
     is_track = None
     artist_name = None
@@ -103,4 +106,4 @@ def parse_release_email(email_html: str | bytes | None, subject: str | None = No
         if m:
             artist_name = artist_name or m.group(1).strip()
 
-    return img_url, release_url, is_track, artist_name, release_title, page_name
+    return None, release_url, is_track, artist_name, release_title, page_name

@@ -36,16 +36,13 @@ def construct_release_list(emails: dict, *, log=print) -> list[dict]:
             html_text = email.html
             raw_date = email.date if email.date else None
             subject = email.subject
-        elif isinstance(email, dict):
-            # Legacy dict format
+        else:
+            # Legacy dict format. Providers only ever hand us EmailMessage
+            # objects or these legacy dicts, so there is no third shape to
+            # fall back to (the old str-email branch was unreachable, CQ-01).
             html_text = email.get("html")
             raw_date = email.get("date")
             subject = email.get("subject", "")
-        else:
-            # Fallback for string-only emails
-            html_text = str(email)
-            raw_date = None
-            subject = ""
 
         # Normalize the date up front. Providers hand us YYYY-MM-DD on the
         # happy path, but a missing/garbled Date header surfaces as "" (IMAP)
@@ -59,7 +56,7 @@ def construct_release_list(emails: dict, *, log=print) -> list[dict]:
             continue
 
         try:
-            img_url, release_url, is_track, artist_name, release_title, page_name = (
+            _placeholder, release_url, is_track, artist_name, release_title, page_name = (
                 parse_release_email(html_text, subject)
             )
         except Exception as exc:
@@ -82,21 +79,18 @@ def construct_release_list(emails: dict, *, log=print) -> list[dict]:
                 log("Warning: skipped one message with a missing or unparseable date.")
             continue
 
-        if not all(
-            x is None
-            for x in [date, img_url, release_url, is_track, artist_name, release_title, page_name]
-        ):
-            releases_unsifted.append(
-                construct_release(
-                    date=date,
-                    img_url=img_url,
-                    release_url=release_url,
-                    is_track=is_track,
-                    artist_name=artist_name,
-                    release_title=release_title,
-                    page_name=page_name,
-                )
+        # release_url is guaranteed non-None here (checked above), so the old
+        # "not all fields are None" guard was always true — dead (CQ-01).
+        releases_unsifted.append(
+            construct_release(
+                date=date,
+                release_url=release_url,
+                is_track=is_track,
+                artist_name=artist_name,
+                release_title=release_title,
+                page_name=page_name,
             )
+        )
 
     # Sift releases with identical urls
     if log:

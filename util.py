@@ -44,14 +44,16 @@ def construct_release(
     is_track=None,
     release_url=None,
     date=None,
-    img_url=None,
     artist_name=None,
     release_title=None,
     page_name=None,
     release_id=None,
 ):
     release = {}
-    release["img_url"] = img_url
+    # img_url is retained as a stable null key for dict-shape/back-compat only
+    # (documented release field, old cache rows). Nothing parses into it anymore
+    # (CQ-32); artwork arrives as a separate enrichment field in a later WP.
+    release["img_url"] = None
     release["date"] = date
     release["artist"] = artist_name
     release["title"] = release_title

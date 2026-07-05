@@ -139,7 +139,11 @@ def mark_date_range_scraped(
 
 
 def mark_dates_not_scraped(dates: Iterable[datetime.date]) -> None:
-    """Explicitly mark dates as not-scraped (removes from scraped set)."""
+    """Explicitly mark dates as not-scraped (removes from scraped set).
+
+    # retained for WP-15/LOG-3: currently uncalled, but the re-check/reset flow
+    # resurrects it — do NOT delete as dead code (CQ-01 deviation).
+    """
     to_drop = {day for day in dates if isinstance(day, datetime.date)}
     _update_date_set(SCRAPE_STATUS_PATH, lambda scraped: scraped - to_drop, drop_today=True)
 

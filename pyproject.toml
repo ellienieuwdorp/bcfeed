@@ -10,11 +10,9 @@ select = ["E", "F", "W", "I", "UP", "B"]
 ignore = [
     "E501",   # line length — formatter owns wrapping
     "B008",   # function calls in argument defaults (Flask/console patterns)
-    # The following flag real defects tracked as audit findings; the fixes (not
-    # blanket suppression) land in their WPs, which remove these ignores:
-    "B904",   # raise ... from — exception chaining hygiene (WP-04/06/16)
-    "E721",   # type(x) == ... comparisons — PY-9 (WP-06)
-    "E722",   # bare except — PY-11 (WP-04/16)
+    # Exception-chaining hygiene (raise ... from) is a real finding still tracked
+    # for WP-16; its fix removes this ignore. E721/E722 fixes have landed (WP-04/06).
+    "B904",
 ]
 
 [tool.ruff.lint.per-file-ignores]

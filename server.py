@@ -555,9 +555,12 @@ def reset_caches():
         for p in (RELEASE_CACHE_PATH, EMPTY_DATES_PATH, SCRAPE_STATUS_PATH, EMBED_CACHE_PATH):
             if _safe_unlink(p):
                 cleared.append(p.name)
-    if clear_viewed or clear_starred:
+    # Each flag clears ONLY its own store — clearing seen history must never
+    # also wipe stars, and vice-versa (CQ-03/PY-13).
+    if clear_viewed:
         if _safe_unlink(VIEWED_PATH):
             cleared.append(VIEWED_PATH.name)
+    if clear_starred:
         if _safe_unlink(STARRED_PATH):
             cleared.append(STARRED_PATH.name)
 
@@ -629,7 +632,21 @@ def populate_range_stream():
         return _corsify(app.response_class(status=204))
     start_arg = request.args.get("start") or request.args.get("from")
     end_arg = request.args.get("end") or start_arg
-    max_results = int(request.args.get("max_results") or GMAIL_MAX_RESULTS_HARD)
+
+    # Validate and clamp max_results (CQ-04/PY-14): a non-integer or non-positive
+    # value is a client error → JSON 400 (never an unhandled ValueError 500), and
+    # an absurdly large value is clamped down to the hard cap rather than trusted.
+    raw_max = request.args.get("max_results")
+    if raw_max is None or raw_max == "":
+        max_results = GMAIL_MAX_RESULTS_HARD
+    else:
+        try:
+            max_results = int(raw_max)
+        except (TypeError, ValueError):
+            return _corsify(jsonify({"error": "max_results must be an integer"})), 400
+        if max_results < 1:
+            return _corsify(jsonify({"error": "max_results must be a positive integer"})), 400
+        max_results = min(max_results, GMAIL_MAX_RESULTS_HARD)
 
     def error_stream(msg: str):
         def gen():

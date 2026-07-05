@@ -281,13 +281,13 @@ def search_messages(service, query):
                 messages.extend(result["messages"])
         return messages
     except Exception as exc:
-        if type(exc) == HttpError:
+        if isinstance(exc, HttpError):
             if getattr(exc, "status_code", None) == 401 or (exc.resp and exc.resp.status == 401):
                 _clear_token()
                 raise GmailAuthError(
                     "Gmail access revoked. Re-load the credentials in the settings and re-authorize."
                 ) from exc
-        elif type(exc) == RefreshError:
+        elif isinstance(exc, RefreshError):
             _clear_token()
             raise GmailAuthError(
                 "Gmail access revoked. Re-load the credentials in the settings and re-authorize."
@@ -304,8 +304,8 @@ def get_messages(service, ids, format, batch_size, log=print):
         if log:
             log(f"Downloading messages {idx} to {min(idx + batch_size, len(ids))}")
         batch = service.new_batch_http_request()
-        for id in ids[idx : idx + batch_size]:
-            batch.add(service.users().messages().get(userId="me", id=id, format=format))
+        for msg_id in ids[idx : idx + batch_size]:
+            batch.add(service.users().messages().get(userId="me", id=msg_id, format=format))
         batch.execute()
         response_keys = [key for key in batch._responses]
 
@@ -314,7 +314,11 @@ def get_messages(service, ids, format, batch_size, log=print):
             if "error" in email_data:
                 err_msg = email_data["error"]["message"]
                 if email_data["error"]["code"] == 429:
-                    raise Exception(f"{err_msg} Try reducing batch size using argument --batch.")
+                    # Batch size is fixed at 20 (server.py); there is no CLI flag
+                    # to tune it. Tell the user the only true remedy (CQ-02/PY-9).
+                    raise Exception(
+                        f"{err_msg} Gmail rate limit reached — wait a minute and try again."
+                    )
                 elif email_data["error"]["code"] == 401:
                     _clear_token()
                     raise GmailAuthError("Gmail access revoked; please reauthorize.")
