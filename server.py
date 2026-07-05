@@ -51,7 +51,13 @@ from paths import (
     STARRED_PATH,
     VIEWED_PATH,
 )
-from pipeline import MaxResultsExceeded, populate_release_cache
+from pipeline import (
+    MaxResultsExceeded,
+    ParseError,
+    ProgressEmitter,
+    encode_event_payload,
+    populate_release_cache,
+)
 from provider_factory import get_current_provider_type, load_provider_config, save_provider_config
 from session_store import get_full_release_cache, scrape_status_for_range
 from util import parse_date
@@ -683,6 +689,37 @@ def load_credentials():
         ), 500
 
 
+# --- Typed SSE protocol (WP-10 · ARC-1/ARCH-4) ------------------------------
+# Every `data:` payload on /populate-range-stream is one JSON object.
+#
+# Progress/log events (unnamed, EventSource `onmessage`):
+#   {v: 1, phase, current, total, message, level, text}
+#   phase ∈ query|download|parse|persist|cache (or null), level ∈
+#   info|warn|error, current/total nullable ints (both present → the client
+#   may render a determinate bar), text = human-readable log line.
+#
+# Terminal events — exactly one per stream, nothing follows it:
+#   event: done   data: {new_releases, days_scraped}
+#   event: error  data: {code, message}
+#   code ∈ auth|max_results|gmail|parse|internal for worker failures, plus
+#   'busy' for a run rejected because another one holds POPULATE_LOCK.
+# A failed run can never end in `event: done` (the pre-WP-10 defect where the
+# worker queued an "ERROR: …" prose line and the generator still emitted done).
+
+
+def _error_code_for(exc: BaseException) -> str:
+    """Map a populate-worker exception to its terminal SSE error code."""
+    if isinstance(exc, MaxResultsExceeded):
+        return "max_results"
+    if isinstance(exc, (GmailAuthError, AuthenticationError)):
+        return "auth"
+    if isinstance(exc, ParseError):
+        return "parse"
+    if isinstance(exc, ProviderError):
+        return "gmail"
+    return "internal"
+
+
 # NOTE: this SSE endpoint intentionally requires no custom header — EventSource
 # cannot set headers. It is protected by the before_request Host check, and a
 # populate run mutates nothing destructively (it only adds to local caches).
@@ -706,46 +743,50 @@ def populate_range_stream():
             return jsonify({"error": "max_results must be a positive integer"}), 400
         max_results = min(max_results, GMAIL_MAX_RESULTS_HARD)
 
-    def error_stream(msg: str):
+    def error_stream(code: str, message: str):
+        payload = encode_event_payload({"code": code, "message": message})
+
         def gen():
-            yield f"event: error\ndata: {msg}\n\n"
+            yield f"event: error\ndata: {payload}\n\n"
 
         headers = {"Cache-Control": "no-cache"}
-        app.logger.error(msg)
+        app.logger.error(message)
         return Response(stream_with_context(gen()), mimetype="text/event-stream", headers=headers)
 
     if not start_arg or not end_arg:
-        return error_stream("Missing start/end")
+        return error_stream("internal", "Missing start/end")
     start = parse_date(start_arg, allow_none=True)
     end = parse_date(end_arg, allow_none=True)
     if not start or not end or start > end:
-        return error_stream("Invalid start/end")
+        return error_stream("internal", "Invalid start/end")
 
     # Check credentials based on provider type
     provider_type = get_current_provider_type()
     if provider_type == "gmail":
         if not gmail_credentials_configured():
             return error_stream(
-                "Gmail credentials not found. Reload credentials in the settings panel."
+                "auth", "Gmail credentials not found. Reload credentials in the settings panel."
             )
         if not gmail_token_available():
             return error_stream(
-                "Gmail token missing. Reload credentials in the settings panel to re-authenticate."
+                "auth",
+                "Gmail token missing. Reload credentials in the settings panel to re-authenticate.",
             )
     elif provider_type == "imap":
         # Check IMAP credentials
         if not _has_credentials_for_provider():
             return error_stream(
-                "IMAP credentials not configured. Please configure IMAP settings (host, username, password, folder) in the settings panel."
+                "auth",
+                "IMAP credentials not configured. Please configure IMAP settings (host, username, password, folder) in the settings panel.",
             )
 
     if not POPULATE_LOCK.acquire(blocking=False):
-        return error_stream("Another populate is already running")
+        return error_stream("busy", "Another populate is already running")
 
-    q: SimpleQueue[str | None] = SimpleQueue()
-
-    def log(msg: str):
-        q.put(str(msg))
+    # Queue items: ("message", payload) for progress/log events, then exactly
+    # one terminal ("done"|"error", payload), then a None sentinel.
+    q: SimpleQueue[tuple[str, dict] | None] = SimpleQueue()
+    emitter = ProgressEmitter(send_event=lambda payload: q.put(("message", payload)))
 
     def worker():
         # The worker owns POPULATE_LOCK for its whole lifetime (JS-10 server
@@ -759,17 +800,37 @@ def populate_range_stream():
                 end.strftime("%Y-%m-%d"),
                 max_results,
                 batch_size=20,
-                log=log,
+                log=emitter,
             )
-            q.put("Populate completed.")
-        except GmailAuthError as exc:
-            q.put(f"ERROR: {exc}")
+            emitter("Populate completed.")
+            q.put(
+                (
+                    "done",
+                    {
+                        "new_releases": emitter.new_releases,
+                        "days_scraped": emitter.days_scraped,
+                    },
+                )
+            )
         except MaxResultsExceeded as exc:
-            q.put(f"Maximum results reached ({exc.found}/{exc.max_results}).")
-        except (AuthenticationError, ProviderError) as exc:
-            q.put(f"ERROR: {exc}")
+            q.put(
+                (
+                    "error",
+                    {
+                        "code": "max_results",
+                        "message": f"Maximum results reached ({exc.found}/{exc.max_results}).",
+                    },
+                )
+            )
         except Exception as exc:
-            q.put(f"ERROR: Unexpected error: {exc}")
+            # The pipeline has already emitted its own "ERROR: …" log line for
+            # anything raised inside it; this terminal event is what the client
+            # keys behavior on (never message prose).
+            code = _error_code_for(exc)
+            message = f"ERROR: Unexpected error: {exc}" if code == "internal" else f"ERROR: {exc}"
+            if code == "internal":
+                app.logger.exception("Populate worker failed")
+            q.put(("error", {"code": code, "message": message}))
         finally:
             POPULATE_LOCK.release()
             q.put(None)
@@ -783,10 +844,22 @@ def populate_range_stream():
         while True:
             item = q.get()
             if item is None:
+                # Safety net: the worker exited without a terminal event.
+                # Failure must never render as success, so this is an error.
+                payload = encode_event_payload(
+                    {"code": "internal", "message": "The run ended unexpectedly."}
+                )
+                yield f"event: error\ndata: {payload}\n\n"
                 break
-            safe = str(item).replace("\n", " ")
-            yield f"data: {safe}\n\n"
-        yield "event: done\ndata: complete\n\n"
+            kind, payload = item
+            data = encode_event_payload(payload)
+            if kind == "message":
+                yield f"data: {data}\n\n"
+                continue
+            # Terminal event ("done" or "error"): emit and end the stream so a
+            # failed run can never be followed by `event: done`.
+            yield f"event: {kind}\ndata: {data}\n\n"
+            break
 
     headers = {"Cache-Control": "no-cache"}
     return Response(

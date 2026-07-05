@@ -1555,6 +1555,51 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
     preloadBtn.addEventListener("click", preloadEmbedsForRange);
   }
 
+  // WP-10 · ARC-1/ARCH-4: /populate-range-stream carries typed JSON events.
+  // Progress/log events (onmessage) are {v:1, phase, current, total, message,
+  // level, text}; the only terminal signals are `event: done`
+  // ({new_releases, days_scraped}) and `event: error` ({code, message}).
+  // Behavior keys ONLY on event names and `code` — never on message prose.
+  function parseSseData(raw) {
+    if (typeof raw !== "string" || !raw) return null;
+    try {
+      const data = JSON.parse(raw);
+      return data && typeof data === "object" ? data : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function restoreExpandedRow() {
+    // renderTable() rebuilds the tbody without detail rows; if a row was
+    // expanded before an in-place refresh, re-open it so it survives (UX-9).
+    const key = state.expandedKey;
+    if (!key) return;
+    const row = document.querySelector(`tr.data-row[data-key="${CSS.escape(key)}"]`);
+    if (row && !row.classList.contains("expanded")) row.click();
+  }
+
+  async function refreshAfterPopulate(summary = {}) {
+    // In-place completion (JS-10/UX-9/PERF-5): refetch only what the run could
+    // have changed — /releases and /scrape-status — and re-render. Sort,
+    // filters, scroll and the expanded row survive because the page never
+    // reloads.
+    try {
+      await fetchReleases();
+    } catch (err) {
+      console.warn("Failed to refresh releases after checking mail", err);
+    }
+    renderTable();
+    restoreExpandedRow();
+    await fetchScrapeStatus();
+    const added = Number(summary.new_releases);
+    if (populateLog && Number.isFinite(added)) {
+      const line = `Added ${added} new release${added === 1 ? "" : "s"}.`;
+      populateLog.innerHTML += `<br><br>${esc(line)}`;
+      populateLog.scrollTop = populateLog.scrollHeight;
+    }
+  }
+
   function populateRangeFromCalendars(triggerBtn = null) {
     checkServerAlive();
     applyCalendarFiltersFromSelection();
@@ -1570,7 +1615,7 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
       btn.disabled = true;
       btn.textContent = "Populating…";
     }
-    async function runPopulate() {
+    function runPopulate() {
       if (!window.EventSource) {
         alert("Populate requires EventSource support. Please use a modern browser.");
         if (btn) {
@@ -1582,45 +1627,58 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
       if (populateLog) populateLog.textContent = "";
       const url = `${apiRoot}/populate-range-stream?start=${encodeURIComponent(startVal)}&end=${encodeURIComponent(endVal)}`;
       const es = new EventSource(url);
-      const handleError = (ev) => {
+      let finished = false;
+      let blipNoted = false;
+      const finishRun = () => {
+        if (finished) return;
+        finished = true;
         es.close();
-        const msg = ev && ev.data ? String(ev.data) : "Populate failed (stream error)";
-        const lower = msg.toLowerCase();
-        if (!maxNoticeShown && lower.includes("maximum") && lower.includes("result")) {
-          maxNoticeShown = true;
-          showMaxResultsModal();
-        }
-        const current = populateLog ? populateLog.textContent : "";
-        const next = current ? `${current}\n${msg}` : msg;
-        if (populateLog) populateLog.textContent = next;
-        if (populateLog) populateLog.scrollTop = populateLog.scrollHeight;
-        alert(msg);
         if (btn) {
           btn.disabled = false;
           btn.textContent = original || "Populate";
         }
       };
       es.onmessage = (ev) => {
-        if (!ev || !ev.data) return;
-        if (!maxNoticeShown && ev.data.includes("Maximum results")) {
-          maxNoticeShown = true;
-          showMaxResultsModal();
-          appendPopulateLogLine("Maximum number of results reached. Stopping download.");
-        }
-        const current = populateLog ? populateLog.textContent : "";
-        const next = current ? `${current}\n${ev.data}` : ev.data;
-        if (populateLog) {
-          populateLog.textContent = next;
-          populateLog.scrollTop = populateLog.scrollHeight;
-        }
-        if (String(ev.data || "").startsWith("ERROR:")) {
-          handleError({ data: ev.data });
-        }
+        const data = parseSseData(ev && ev.data);
+        if (!data || data.v !== 1) return;
+        blipNoted = false;
+        // data.phase / data.current / data.total feed the WP-22 determinate
+        // progress bar; until then the log box carries the text fallback.
+        if (typeof data.text === "string") appendPopulateLogLine(data.text);
       };
-      es.addEventListener("error", handleError);
-      es.addEventListener("done", () => {
-        es.close();
-        window.location.reload();
+      es.addEventListener("error", (ev) => {
+        const data = parseSseData(ev && ev.data);
+        if (!data) {
+          // Connection-level blip, not a server-sent failure: EventSource
+          // reconnects on its own, and only a typed `event: error` payload is
+          // terminal (JS-10). Note it once, keep listening.
+          if (es.readyState === EventSource.CLOSED && !finished) {
+            finishRun();
+            appendPopulateLogLine("Lost the connection to the app.");
+            checkServerAlive();
+          } else if (!blipNoted && !finished) {
+            blipNoted = true;
+            appendPopulateLogLine("Connection interrupted — reconnecting…");
+          }
+          return;
+        }
+        finishRun();
+        if (data.code === "max_results") {
+          if (!maxNoticeShown) {
+            maxNoticeShown = true;
+            showMaxResultsModal();
+          }
+          appendPopulateLogLine(data.message || "Result limit reached.");
+          return;
+        }
+        const msg = data.message || "Something went wrong while getting releases.";
+        appendPopulateLogLine(msg);
+        alert(msg);
+      });
+      es.addEventListener("done", (ev) => {
+        const data = parseSseData(ev && ev.data) || {};
+        finishRun();
+        refreshAfterPopulate(data);
       });
     }
     runPopulate();
