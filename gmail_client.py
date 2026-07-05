@@ -1,7 +1,6 @@
 import base64
 import json
 import pickle
-import quopri
 import sys
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -209,14 +208,12 @@ def get_html_from_message(msg):
 
         # If this part is HTML, decode it
         if mime_type == "text/html" and data:
-            # Base64-url decode
+            # Base64-url decode. The Gmail API delivers body data with its
+            # Content-Transfer-Encoding already decoded, so no further
+            # (quoted-printable) decoding may be applied — a speculative
+            # second decode corrupts legitimate '=XX' sequences in the HTML
+            # (CQ-16/PY-11).
             decoded_bytes = base64.urlsafe_b64decode(data)
-
-            # Some Gmail messages use quoted-printable encoding inside HTML
-            try:
-                decoded_bytes = quopri.decodestring(decoded_bytes)
-            except:
-                pass
 
             # Convert to Unicode
             return decoded_bytes.decode("utf-8", errors="replace")

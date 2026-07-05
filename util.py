@@ -76,11 +76,17 @@ def dedupe_by_url(items: Iterable[dict]) -> list[dict]:
 
 
 def dedupe_by_date(items: Iterable[dict], *, keep: str = "last") -> list[dict]:
-    """Deduplicate by URL, keeping the first/last entry based on release date."""
+    """Deduplicate by URL, keeping the first/last entry based on release date.
+
+    Items with a missing or unparseable date are tolerated, never fatal
+    (CQ-14/LOG-10): a date-less item never wins a conflict against a dated
+    entry for the same URL, so one bad cached record degrades to one
+    never-winning record instead of aborting every populate of its range.
+    """
     if keep not in {"first", "last"}:
         raise ValueError("keep must be 'first' or 'last'")
 
-    kept: dict[str, tuple[datetime.date, dict]] = {}
+    kept: dict[str, tuple[datetime.date | None, dict]] = {}
     without_url: list[dict] = []
 
     for item in items:
@@ -88,12 +94,17 @@ def dedupe_by_date(items: Iterable[dict], *, keep: str = "last") -> list[dict]:
         if not url:
             without_url.append(item)
             continue
-        date = parse_date(item.get("date"))
+        date = parse_date(item.get("date"), allow_none=True)
         if url not in kept:
             kept[url] = (date, item)
             continue
         existing_date, _ = kept[url]
-        if keep == "last":
+        if date is None:
+            # Date-less items never win a keep conflict.
+            replace = False
+        elif existing_date is None:
+            replace = True
+        elif keep == "last":
             replace = date >= existing_date
         else:
             replace = date <= existing_date

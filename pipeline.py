@@ -34,18 +34,25 @@ def construct_release_list(emails: dict, *, log=print) -> list[dict]:
         if hasattr(email, "html"):
             # EmailMessage from provider
             html_text = email.html
-            date = email.date if email.date else None
+            raw_date = email.date if email.date else None
             subject = email.subject
         elif isinstance(email, dict):
             # Legacy dict format
             html_text = email.get("html")
-            date = parse_date(email.get("date")).strftime("%Y-%m-%d") if email.get("date") else None
+            raw_date = email.get("date")
             subject = email.get("subject", "")
         else:
             # Fallback for string-only emails
             html_text = str(email)
-            date = None
+            raw_date = None
             subject = ""
+
+        # Normalize the date up front. Providers hand us YYYY-MM-DD on the
+        # happy path, but a missing/garbled Date header surfaces as "" (IMAP)
+        # or the raw header text (Gmail / legacy dicts). A bad date must cost
+        # one message, never the whole run (CQ-14/PY-7).
+        parsed_date = parse_date(raw_date, allow_none=True)
+        date = parsed_date.strftime("%Y-%m-%d") if parsed_date else None
 
         if not html_text:
             skipped += 1
@@ -64,6 +71,15 @@ def construct_release_list(emails: dict, *, log=print) -> list[dict]:
         # Only keep emails we could match to a Bandcamp release URL.
         if not release_url:
             skipped += 1
+            continue
+
+        # A release without a parseable date cannot be bucketed: drop it here
+        # with a counted skip rather than letting a date-less row crash
+        # dedupe_by_date or linger unbucketable in the cache (LOG-24/PY-18).
+        if date is None:
+            skipped += 1
+            if log:
+                log("Warning: skipped one message with a missing or unparseable date.")
             continue
 
         if not all(
@@ -169,7 +185,22 @@ def populate_release_cache(
                 f"Parsed {len(new_releases)} releases from {provider_name} for {query_after} to {query_before}."
             )
             releases.extend(new_releases)
+            # Invariant (LOG-1/CQ-10): persist this range's releases BEFORE
+            # marking the range scraped. The scrape ledger must never claim a
+            # day whose data is not durable — under the never-re-fetch
+            # principle, mark-before-persist turns any later failure into
+            # permanent silent data loss. Keep-last arbitration runs against
+            # the cache plus earlier ranges so the winning row per URL matches
+            # the previous end-of-run persist; only this range's winners are
+            # written (no re-persisting of earlier data).
+            new_urls = {release["url"] for release in new_releases}
+            deduped_so_far = dedupe_by_date(releases, keep="last")
+            persist_release_metadata(
+                [release for release in deduped_so_far if release.get("url") in new_urls],
+                exclude_today=True,
+            )
             # Mark the entire queried span as scraped so we do not re-fetch it.
+            # This must stay the LAST step of each range.
             mark_date_range_scraped(start_missing, end_missing, exclude_today=True)
     except AuthenticationError as exc:
         log(f"ERROR: Authentication failed: {exc}")
@@ -184,11 +215,10 @@ def populate_release_cache(
             except Exception:
                 pass
 
-    # Deduplicate on URL after combining cached + new
+    # Deduplicate on URL after combining cached + new. Each range already
+    # persisted its own releases above (before its scraped mark), so no tail
+    # persist is needed — a second write here would double-persist.
     deduped = dedupe_by_date(releases, keep="last")
 
     log("")
     log(f"Loaded {len(deduped)} unique releases including cache.")
-
-    # Always persist the run results when a page will be generated, so cache is up to date.
-    persist_release_metadata(deduped, exclude_today=True)
