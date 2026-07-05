@@ -1,27 +1,29 @@
-from typing import Dict, Iterable, Tuple
 import datetime
+from collections.abc import Iterable
 
 from bandcamp_email_parser import parse_release_email
-from provider_factory import create_provider, get_current_provider_type
 from email_provider import AuthenticationError, SearchQuery
-from util import construct_release, parse_date, dedupe_by_date, dedupe_by_url
+from provider_factory import create_provider, get_current_provider_type
 from session_store import (
     cached_releases_for_range,
     collapse_date_ranges,
+    mark_date_range_scraped,
     persist_empty_date_range,
     persist_release_metadata,
-    mark_date_range_scraped,
 )
+from util import construct_release, dedupe_by_date, dedupe_by_url, parse_date
 
 
 class MaxResultsExceeded(Exception):
     def __init__(self, max_results: int, found: int):
-        super().__init__(f"Exceeded maximum number of results per search (max={max_results}, num results={found})")
+        super().__init__(
+            f"Exceeded maximum number of results per search (max={max_results}, num results={found})"
+        )
         self.max_results = max_results
         self.found = found
 
 
-def construct_release_list(emails: Dict, *, log=print) -> list[dict]:
+def construct_release_list(emails: dict, *, log=print) -> list[dict]:
     """Parse email messages into release lists."""
     if log:
         log("Parsing messages...")
@@ -29,7 +31,7 @@ def construct_release_list(emails: Dict, *, log=print) -> list[dict]:
     skipped = 0
     for _msg_id, email in emails.items():
         # Handle both EmailMessage objects and legacy dict format
-        if hasattr(email, 'html'):
+        if hasattr(email, "html"):
             # EmailMessage from provider
             html_text = email.html
             date = email.date if email.date else None
@@ -50,8 +52,8 @@ def construct_release_list(emails: Dict, *, log=print) -> list[dict]:
             continue
 
         try:
-            img_url, release_url, is_track, artist_name, release_title, page_name = parse_release_email(
-                html_text, subject
+            img_url, release_url, is_track, artist_name, release_title, page_name = (
+                parse_release_email(html_text, subject)
             )
         except Exception as exc:
             skipped += 1
@@ -64,7 +66,10 @@ def construct_release_list(emails: Dict, *, log=print) -> list[dict]:
             skipped += 1
             continue
 
-        if not all(x is None for x in [date, img_url, release_url, is_track, artist_name, release_title, page_name]):
+        if not all(
+            x is None
+            for x in [date, img_url, release_url, is_track, artist_name, release_title, page_name]
+        ):
             releases_unsifted.append(
                 construct_release(
                     date=date,
@@ -87,7 +92,9 @@ def construct_release_list(emails: Dict, *, log=print) -> list[dict]:
     return releases
 
 
-def populate_release_cache(after_date: str, before_date: str, max_results: int, batch_size: int, log=print) -> None:
+def populate_release_cache(
+    after_date: str, before_date: str, max_results: int, batch_size: int, log=print
+) -> None:
     """
     Use cached email-scraped release metadata for previously seen dates.
     Only hit email provider for dates in the requested range that have no cache entry.
@@ -98,7 +105,9 @@ def populate_release_cache(after_date: str, before_date: str, max_results: int, 
         raise ValueError("Start date must be on or before end date")
 
     cached_releases, missing_dates = cached_releases_for_range(start_date, end_date)
-    missing_ranges: Iterable[Tuple[datetime.date, datetime.date]] = collapse_date_ranges(missing_dates)
+    missing_ranges: Iterable[tuple[datetime.date, datetime.date]] = collapse_date_ranges(
+        missing_dates
+    )
     releases = list(cached_releases)
 
     # Get provider type for logging
@@ -156,7 +165,9 @@ def populate_release_cache(after_date: str, before_date: str, max_results: int, 
                 log(f"ERROR: {exc}")
                 raise
             new_releases = construct_release_list(emails, log=log)
-            log(f"Parsed {len(new_releases)} releases from {provider_name} for {query_after} to {query_before}.")
+            log(
+                f"Parsed {len(new_releases)} releases from {provider_name} for {query_after} to {query_before}."
+            )
             releases.extend(new_releases)
             # Mark the entire queried span as scraped so we do not re-fetch it.
             mark_date_range_scraped(start_missing, end_missing, exclude_today=True)

@@ -9,7 +9,6 @@ import json
 import keyring
 from keyring.errors import KeyringError, NoKeyringError, PasswordDeleteError
 
-
 SERVICE_NAME = "bcfeed"
 IMAP_PASSWORD_KEY = "imap-password"
 GMAIL_CLIENT_CONFIG_KEY = "gmail-client-config"

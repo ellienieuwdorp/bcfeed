@@ -7,18 +7,16 @@ Supports generic IMAP servers including Gmail, iCloud, Outlook, and others.
 from __future__ import annotations
 
 import email
+from collections.abc import Callable
 from datetime import datetime
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
-from typing import Callable, Optional
 
 from email_provider import (
-    EmailProvider,
     EmailMessage,
+    EmailProvider,
     SearchQuery,
-    AuthenticationError,
 )
-
 from imap_client import ImapClient, ImapConfig
 
 
@@ -52,7 +50,7 @@ class ImapProvider(EmailProvider):
         self,
         query: SearchQuery,
         max_results: int = 100,
-        log: Optional[Callable[[str], None]] = None,
+        log: Callable[[str], None] | None = None,
     ) -> list[str]:
         """
         Search for messages matching the query using IMAP UID SEARCH.
@@ -111,7 +109,7 @@ class ImapProvider(EmailProvider):
 
         return criteria if criteria else ["ALL"]
 
-    def _to_imap_date(self, date_str: str) -> Optional[str]:
+    def _to_imap_date(self, date_str: str) -> str | None:
         """
         Convert YYYY/MM/DD or YYYY-MM-DD to DD-Mon-YYYY for IMAP.
 
@@ -134,7 +132,7 @@ class ImapProvider(EmailProvider):
         self,
         message_ids: list[str],
         batch_size: int = 20,
-        log: Optional[Callable[[str], None]] = None,
+        log: Callable[[str], None] | None = None,
     ) -> dict[str, EmailMessage]:
         """
         Fetch full message content for given IDs.
@@ -168,7 +166,7 @@ class ImapProvider(EmailProvider):
 
         return results
 
-    def _fetch_single(self, msg_id: str) -> Optional[EmailMessage]:
+    def _fetch_single(self, msg_id: str) -> EmailMessage | None:
         """
         Fetch and parse a single message.
 

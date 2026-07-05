@@ -3,12 +3,11 @@ from __future__ import annotations
 import ast
 import json
 import re
-from typing import Optional
 
 from bs4 import BeautifulSoup
 
 
-def extract_bc_meta(html_text: str) -> Optional[dict]:
+def extract_bc_meta(html_text: str) -> dict | None:
     soup = BeautifulSoup(html_text, "html.parser")
     meta = soup.find("meta", attrs={"name": "bc-page-properties"})
     if not meta or "content" not in meta.attrs:
@@ -58,7 +57,7 @@ def extract_bandcamp_description(html_text: str) -> str | None:
     return None
 
 
-def build_embed_url(item_id: Optional[int], is_track: bool) -> Optional[str]:
+def build_embed_url(item_id: int | None, is_track: bool) -> str | None:
     if not item_id:
         return None
     kind = "track" if is_track else "album"

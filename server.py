@@ -11,38 +11,21 @@ import os
 import socket
 import threading
 from pathlib import Path
+from queue import SimpleQueue
 
 import requests
-from flask import Flask, jsonify, request, Response, stream_with_context, send_file, render_template
+from flask import Flask, Response, jsonify, render_template, request, send_file, stream_with_context
 from markdown_it import MarkdownIt
-from queue import SimpleQueue
-from werkzeug.serving import make_server, WSGIRequestHandler
+from werkzeug.serving import WSGIRequestHandler, make_server
 
-from bandcamp import extract_bc_meta, extract_bandcamp_description, build_embed_url
+from bandcamp import build_embed_url, extract_bandcamp_description, extract_bc_meta
 from credential_store import (
     CredentialStoreError,
     get_imap_password,
     has_imap_password,
     save_gmail_client_config_json,
 )
-from util import parse_date
-from paths import (
-    VIEWED_PATH,
-    STARRED_PATH,
-    RELEASE_CACHE_PATH,
-    EMPTY_DATES_PATH,
-    SCRAPE_STATUS_PATH,
-    EMBED_CACHE_PATH,
-    DASHBOARD_PATH,
-    DASHBOARD_CSS_PATH,
-    DASHBOARD_JS_PATH,
-    README_PATH,
-    SETUP_PATH,
-    IMAP_SETUP_PATH,
-    GMAIL_SETUP_PATH,
-)
-from session_store import scrape_status_for_range, get_full_release_cache
-from pipeline import populate_release_cache, MaxResultsExceeded
+from email_provider import AuthenticationError, ProviderError
 from gmail_client import (
     GmailAuthError,
     clear_gmail_credentials,
@@ -50,9 +33,26 @@ from gmail_client import (
     gmail_credentials_configured,
     gmail_token_available,
 )
-from provider_factory import load_provider_config, save_provider_config, get_current_provider_type
-from email_provider import AuthenticationError, ProviderError
 from imap_client import ImapClient, ImapConfig, ImapFolder
+from paths import (
+    DASHBOARD_CSS_PATH,
+    DASHBOARD_JS_PATH,
+    DASHBOARD_PATH,
+    EMBED_CACHE_PATH,
+    EMPTY_DATES_PATH,
+    GMAIL_SETUP_PATH,
+    IMAP_SETUP_PATH,
+    README_PATH,
+    RELEASE_CACHE_PATH,
+    SCRAPE_STATUS_PATH,
+    SETUP_PATH,
+    STARRED_PATH,
+    VIEWED_PATH,
+)
+from pipeline import MaxResultsExceeded, populate_release_cache
+from provider_factory import get_current_provider_type, load_provider_config, save_provider_config
+from session_store import get_full_release_cache, scrape_status_for_range
+from util import parse_date
 
 app = Flask(__name__)
 
@@ -143,7 +143,9 @@ def _save_embed_cache(cache: dict) -> None:
     tmp.replace(EMBED_CACHE_PATH)
 
 
-def _save_embed_metadata(url: str, *, release_id=None, is_track=None, embed_url=None, description=None) -> None:
+def _save_embed_metadata(
+    url: str, *, release_id=None, is_track=None, embed_url=None, description=None
+) -> None:
     if not url:
         return
     cache = _load_embed_cache()
@@ -334,7 +336,9 @@ def _build_imap_config(imap: dict | None, existing: dict | None = None) -> dict:
         "folder": str(imap.get("folder", existing.get("folder", "")) or "").strip(),
         "use_ssl": _coerce_imap_use_ssl(imap.get("use_ssl", existing.get("use_ssl", True))),
     }
-    if not config["password"] and _imap_connection_signature(config) == _imap_connection_signature(existing):
+    if not config["password"] and _imap_connection_signature(config) == _imap_connection_signature(
+        existing
+    ):
         try:
             config["password"] = get_imap_password()
         except CredentialStoreError:
@@ -377,8 +381,7 @@ def _discover_imap_folders(client: ImapClient) -> tuple[list[str], str | None]:
     recommended_folder: str | None = None
 
     probe_candidates = [
-        folder for folder in ordered
-        if folder.selectable and _imap_folder_rank(folder)[0] < 500
+        folder for folder in ordered if folder.selectable and _imap_folder_rank(folder)[0] < 500
     ][:5]
     for folder in probe_candidates:
         try:
@@ -504,10 +507,21 @@ def embed_meta():
     embed_url = build_embed_url(item_id, is_track)
 
     # Persist embed metadata for future sessions.
-    _save_embed_metadata(release_url, release_id=item_id, is_track=is_track, embed_url=embed_url, description=description)
+    _save_embed_metadata(
+        release_url,
+        release_id=item_id,
+        is_track=is_track,
+        embed_url=embed_url,
+        description=description,
+    )
 
     response = jsonify(
-        {"release_id": item_id, "is_track": is_track, "embed_url": embed_url, "description": description}
+        {
+            "release_id": item_id,
+            "is_track": is_track,
+            "embed_url": embed_url,
+            "description": description,
+        }
     )
     return _corsify(response)
 
@@ -610,7 +624,9 @@ def load_credentials():
         log("Credentials uploaded and authenticated.")
         return _corsify(jsonify({"ok": True, "logs": logs}))
     except UnicodeDecodeError:
-        return _corsify(jsonify({"error": "Credentials file must be valid UTF-8 JSON", "logs": logs})), 400
+        return _corsify(
+            jsonify({"error": "Credentials file must be valid UTF-8 JSON", "logs": logs})
+        ), 400
     except ValueError as exc:
         log(f"ERROR: {exc}")
         return _corsify(jsonify({"error": str(exc), "logs": logs})), 400
@@ -633,6 +649,7 @@ def populate_range_stream():
     def error_stream(msg: str):
         def gen():
             yield f"event: error\ndata: {msg}\n\n"
+
         headers = {
             "Access-Control-Allow-Origin": "*",
             "Cache-Control": "no-cache",
@@ -651,13 +668,19 @@ def populate_range_stream():
     provider_type = get_current_provider_type()
     if provider_type == "gmail":
         if not gmail_credentials_configured():
-            return error_stream("Gmail credentials not found. Reload credentials in the settings panel.")
+            return error_stream(
+                "Gmail credentials not found. Reload credentials in the settings panel."
+            )
         if not gmail_token_available():
-            return error_stream("Gmail token missing. Reload credentials in the settings panel to re-authenticate.")
+            return error_stream(
+                "Gmail token missing. Reload credentials in the settings panel to re-authenticate."
+            )
     elif provider_type == "imap":
         # Check IMAP credentials
         if not _has_credentials_for_provider():
-            return error_stream("IMAP credentials not configured. Please configure IMAP settings (host, username, password, folder) in the settings panel.")
+            return error_stream(
+                "IMAP credentials not configured. Please configure IMAP settings (host, username, password, folder) in the settings panel."
+            )
 
     if not POPULATE_LOCK.acquire(blocking=False):
         return error_stream("Another populate is already running")
@@ -707,7 +730,9 @@ def populate_range_stream():
         "Access-Control-Allow-Origin": "*",
         "Cache-Control": "no-cache",
     }
-    return Response(stream_with_context(event_stream()), mimetype="text/event-stream", headers=headers)
+    return Response(
+        stream_with_context(event_stream()), mimetype="text/event-stream", headers=headers
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -740,10 +765,14 @@ def imap_discover():
             if client is not None:
                 client.close()
 
-        return _corsify(jsonify({
-            "folders": folders,
-            "recommended_folder": recommended_folder,
-        }))
+        return _corsify(
+            jsonify(
+                {
+                    "folders": folders,
+                    "recommended_folder": recommended_folder,
+                }
+            )
+        )
     except CredentialStoreError as exc:
         return _corsify(jsonify({"error": str(exc)})), 500
     except (AuthenticationError, ProviderError, ValueError) as exc:

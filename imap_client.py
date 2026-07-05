@@ -11,7 +11,6 @@ import imaplib
 import re
 import ssl
 from dataclasses import dataclass
-from typing import Optional
 
 from email_provider import AuthenticationError, ProviderError
 
@@ -40,7 +39,7 @@ class ImapFolder:
 class ImapClient:
     def __init__(self, config: ImapConfig):
         self.config = config
-        self._connection: Optional[imaplib.IMAP4_SSL | imaplib.IMAP4] = None
+        self._connection: imaplib.IMAP4_SSL | imaplib.IMAP4 | None = None
 
     _LIST_RESPONSE_RE = re.compile(
         r'^\((?P<flags>[^)]*)\)\s+(?P<delimiter>NIL|"(?:[^"\\]|\\.)*"|[^ ]+)\s+(?P<name>.+)$'
@@ -168,7 +167,11 @@ class ImapClient:
         if raw_item is None:
             return None
 
-        item_text = raw_item.decode("utf-8", errors="replace") if isinstance(raw_item, bytes) else str(raw_item)
+        item_text = (
+            raw_item.decode("utf-8", errors="replace")
+            if isinstance(raw_item, bytes)
+            else str(raw_item)
+        )
         item_text = item_text.strip()
         if not item_text:
             return None

@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import datetime
 import json
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Dict, Iterable, List, Set, Tuple
 
 from paths import EMPTY_DATES_PATH, RELEASE_CACHE_PATH, SCRAPE_STATUS_PATH
 from util import dedupe_by_url
 
-CacheType = Dict[str, List[dict]]
+CacheType = dict[str, list[dict]]
 
 CACHE_PATH = RELEASE_CACHE_PATH
 EMPTY_PATH = EMPTY_DATES_PATH
@@ -32,7 +32,7 @@ def _load_cache() -> CacheType:
     if not CACHE_PATH.exists():
         return {}
     try:
-        with open(CACHE_PATH, "r", encoding="utf-8") as f:
+        with open(CACHE_PATH, encoding="utf-8") as f:
             data = json.load(f)
             if isinstance(data, dict):
                 return data  # type: ignore[return-value]
@@ -50,12 +50,12 @@ def _save_cache(cache: CacheType) -> None:
     tmp_path.replace(CACHE_PATH)
 
 
-def _load_date_set(path: Path) -> Set[datetime.date]:
+def _load_date_set(path: Path) -> set[datetime.date]:
     _ensure_cache_dir()
     if not path.exists():
         return set()
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             raw = json.load(f)
             dates = set()
             for item in raw if isinstance(raw, list) else []:
@@ -67,7 +67,7 @@ def _load_date_set(path: Path) -> Set[datetime.date]:
         return set()
 
 
-def _save_date_set(path: Path, dates: Set[datetime.date], *, drop_today: bool = False) -> None:
+def _save_date_set(path: Path, dates: set[datetime.date], *, drop_today: bool = False) -> None:
     _ensure_cache_dir()
     tmp_path = path.with_suffix(".tmp")
     if drop_today:
@@ -82,19 +82,19 @@ def _save_date_set(path: Path, dates: Set[datetime.date], *, drop_today: bool = 
     tmp_path.replace(path)
 
 
-def _load_empty_dates() -> Set[datetime.date]:
+def _load_empty_dates() -> set[datetime.date]:
     return _load_date_set(EMPTY_PATH)
 
 
-def _load_scrape_status() -> Set[datetime.date]:
+def _load_scrape_status() -> set[datetime.date]:
     return _load_date_set(SCRAPE_STATUS_PATH)
 
 
-def _save_scrape_status(dates: Set[datetime.date]) -> None:
+def _save_scrape_status(dates: set[datetime.date]) -> None:
     _save_date_set(SCRAPE_STATUS_PATH, dates, drop_today=True)
 
 
-def _save_empty_dates(dates: Set[datetime.date]) -> None:
+def _save_empty_dates(dates: set[datetime.date]) -> None:
     _save_date_set(EMPTY_PATH, dates)
 
 
@@ -113,12 +113,12 @@ def _to_date(val) -> datetime.date | None:
     return None
 
 
-def get_full_release_cache() -> List[dict]:
+def get_full_release_cache() -> list[dict]:
     """
     Return all cached release metadata, flattened across all dates.
     """
     cache = _load_cache()
-    all_items: List[dict] = []
+    all_items: list[dict] = []
     for day in sorted(cache.keys()):
         day_entries = cache.get(day) or []
         if isinstance(day_entries, list):
@@ -141,7 +141,9 @@ def mark_dates_scraped(dates: Iterable[datetime.date], *, exclude_today: bool = 
     _save_scrape_status(scraped)
 
 
-def mark_date_range_scraped(start: datetime.date, end: datetime.date, *, exclude_today: bool = True) -> None:
+def mark_date_range_scraped(
+    start: datetime.date, end: datetime.date, *, exclude_today: bool = True
+) -> None:
     """Mark a contiguous date range as scraped."""
     if start > end:
         return
@@ -165,7 +167,7 @@ def mark_dates_not_scraped(dates: Iterable[datetime.date]) -> None:
     _save_scrape_status(scraped)
 
 
-def scrape_status_for_range(start: datetime.date, end: datetime.date) -> Dict[str, bool]:
+def scrape_status_for_range(start: datetime.date, end: datetime.date) -> dict[str, bool]:
     """
     Return a mapping of ISO date -> scraped flag for the inclusive range.
     Today's date is always False (not scraped).
@@ -190,7 +192,7 @@ def persist_release_metadata(releases: Iterable[dict], *, exclude_today: bool = 
     cache = _load_cache()
     empty_dates = _load_empty_dates()
     today = datetime.date.today()
-    scraped_days: Set[datetime.date] = set()
+    scraped_days: set[datetime.date] = set()
     for release in releases:
         day = _to_date(release.get("date"))
         if not day:
@@ -212,7 +214,9 @@ def persist_release_metadata(releases: Iterable[dict], *, exclude_today: bool = 
         mark_dates_scraped(scraped_days, exclude_today=exclude_today)
 
 
-def cached_releases_for_range(start: datetime.date, end: datetime.date) -> Tuple[List[dict], List[datetime.date]]:
+def cached_releases_for_range(
+    start: datetime.date, end: datetime.date
+) -> tuple[list[dict], list[datetime.date]]:
     """
     Return (cached_releases, missing_dates) for the inclusive date range.
     missing_dates are days that have not been scraped yet.
@@ -223,8 +227,8 @@ def cached_releases_for_range(start: datetime.date, end: datetime.date) -> Tuple
     # Treat explicitly empty days as already scraped (so they are not missing).
     scraped_dates.update(empty_dates)
     cursor = start
-    cached: List[dict] = []
-    missing: List[datetime.date] = []
+    cached: list[dict] = []
+    missing: list[datetime.date] = []
     one_day = datetime.timedelta(days=1)
     while cursor <= end:
         iso = cursor.isoformat()
@@ -237,12 +241,12 @@ def cached_releases_for_range(start: datetime.date, end: datetime.date) -> Tuple
     return dedupe_by_url(cached), missing
 
 
-def collapse_date_ranges(dates: List[datetime.date]) -> List[Tuple[datetime.date, datetime.date]]:
+def collapse_date_ranges(dates: list[datetime.date]) -> list[tuple[datetime.date, datetime.date]]:
     """Collapse a list of dates into contiguous inclusive ranges."""
     if not dates:
         return []
     dates = sorted(set(dates))
-    ranges: List[Tuple[datetime.date, datetime.date]] = []
+    ranges: list[tuple[datetime.date, datetime.date]] = []
     start = prev = dates[0]
     for day in dates[1:]:
         if day == prev + datetime.timedelta(days=1):
@@ -254,7 +258,9 @@ def collapse_date_ranges(dates: List[datetime.date]) -> List[Tuple[datetime.date
     return ranges
 
 
-def persist_empty_date_range(start: datetime.date, end: datetime.date, *, exclude_today: bool = True) -> None:
+def persist_empty_date_range(
+    start: datetime.date, end: datetime.date, *, exclude_today: bool = True
+) -> None:
     """
     Record a contiguous date range that returned no Gmail results so we avoid
     querying it again. Optionally excludes today's date.

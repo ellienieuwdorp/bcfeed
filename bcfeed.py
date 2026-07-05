@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import argparse
 import time
-import sys
 import webbrowser
 
 from server import start_server_thread
@@ -24,9 +23,15 @@ def launch_dashboard(server_port: int, *, launch_browser: bool = True):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run the bcfeed local server and open the dashboard.")
-    parser.add_argument("--port", type=int, default=SERVER_PORT, help="Preferred port for the local server.")
-    parser.add_argument("--no-browser", action="store_true", help="Do not open the dashboard in a browser.")
+    parser = argparse.ArgumentParser(
+        description="Run the bcfeed local server and open the dashboard."
+    )
+    parser.add_argument(
+        "--port", type=int, default=SERVER_PORT, help="Preferred port for the local server."
+    )
+    parser.add_argument(
+        "--no-browser", action="store_true", help="Do not open the dashboard in a browser."
+    )
     args = parser.parse_args()
 
     server_instance, server_thread, server_port = start_server_thread(args.port)
@@ -37,7 +42,7 @@ def main():
     print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
     print("")
     print(f"Server port: {server_port}")
-    print("Dashboard is available at: http://localhost:{port}/dashboard".format(port=server_port))
+    print(f"Dashboard is available at: http://localhost:{server_port}/dashboard")
     print("Keep this process running while using bcfeed in your browser.")
     print("Press Ctrl+C to stop.")
 

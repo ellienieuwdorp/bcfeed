@@ -104,4 +104,3 @@ def parse_release_email(email_html: str | bytes | None, subject: str | None = No
             artist_name = artist_name or m.group(1).strip()
 
     return img_url, release_url, is_track, artist_name, release_title, page_name
-

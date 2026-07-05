@@ -6,20 +6,20 @@ Wraps the existing gmail.py functionality to implement the EmailProvider interfa
 
 from __future__ import annotations
 
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from email_provider import (
-    EmailProvider,
-    EmailMessage,
-    SearchQuery,
     AuthenticationError,
+    EmailMessage,
+    EmailProvider,
     ProviderError,
+    SearchQuery,
 )
 from gmail_client import (
+    GmailAuthError,
+    get_messages,
     gmail_authenticate,
     search_messages,
-    get_messages,
-    GmailAuthError,
 )
 
 
@@ -57,7 +57,7 @@ class GmailProvider(EmailProvider):
         self,
         query: SearchQuery,
         max_results: int = 100,
-        log: Optional[Callable[[str], None]] = None,
+        log: Callable[[str], None] | None = None,
     ) -> list[str]:
         """
         Search for messages matching the query using Gmail query syntax.
@@ -79,7 +79,7 @@ class GmailProvider(EmailProvider):
         try:
             messages = search_messages(self._service, gmail_query)
             # Extract just the IDs and limit results
-            ids = [m['id'] for m in messages]
+            ids = [m["id"] for m in messages]
             return ids[:max_results]
         except GmailAuthError as e:
             raise AuthenticationError(str(e))
@@ -109,7 +109,7 @@ class GmailProvider(EmailProvider):
         self,
         message_ids: list[str],
         batch_size: int = 20,
-        log: Optional[Callable[[str], None]] = None,
+        log: Callable[[str], None] | None = None,
     ) -> dict[str, EmailMessage]:
         """
         Fetch full message content for given IDs.
@@ -133,7 +133,7 @@ class GmailProvider(EmailProvider):
             raw_messages = get_messages(
                 self._service,
                 message_ids,
-                format='full',
+                format="full",
                 batch_size=batch_size,
                 log=log,
             )
@@ -146,9 +146,9 @@ class GmailProvider(EmailProvider):
                 original_id = message_ids[int(idx)] if idx.isdigit() else idx
 
                 results[original_id] = EmailMessage(
-                    html=msg_data.get('html', ''),
-                    date=msg_data.get('date', ''),
-                    subject=msg_data.get('subject', ''),
+                    html=msg_data.get("html", ""),
+                    date=msg_data.get("date", ""),
+                    subject=msg_data.get("subject", ""),
                 )
 
             return results

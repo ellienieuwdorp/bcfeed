@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 from credential_store import CredentialStoreError, get_imap_password, save_imap_password
 from email_provider import EmailProvider
@@ -102,8 +102,8 @@ def _migrate_legacy_imap_password(config: dict) -> dict:
 
 
 def create_provider(
-    provider_type: Optional[ProviderType] = None,
-    config: Optional[dict] = None,
+    provider_type: ProviderType | None = None,
+    config: dict | None = None,
 ) -> EmailProvider:
     """
     Create an email provider instance.
@@ -126,6 +126,7 @@ def create_provider(
 
     if provider_type == "gmail":
         from gmail_provider import GmailProvider
+
         return GmailProvider()
 
     elif provider_type == "imap":
@@ -134,8 +135,7 @@ def create_provider(
         imap_config = config.get("imap_config")
         if not imap_config:
             raise ValueError(
-                "IMAP provider requires configuration. "
-                "Please configure IMAP settings first."
+                "IMAP provider requires configuration. Please configure IMAP settings first."
             )
 
         return ImapProvider(

@@ -1,27 +1,36 @@
-import pickle
-import sys
 import base64
 import json
+import pickle
 import quopri
+import sys
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+
+from google.auth.exceptions import RefreshError
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
-from google.auth.exceptions import RefreshError
-from google.oauth2.credentials import Credentials
 
 from credential_store import (
     CredentialStoreError,
-    clear_gmail_client_config as clear_stored_gmail_client_config,
-    clear_gmail_token as clear_stored_gmail_token,
     get_gmail_client_config_json,
     get_gmail_token_json,
-    has_gmail_client_config as has_stored_gmail_client_config,
-    has_gmail_token as has_stored_gmail_token,
     save_gmail_client_config_json,
     save_gmail_token_json,
+)
+from credential_store import (
+    clear_gmail_client_config as clear_stored_gmail_client_config,
+)
+from credential_store import (
+    clear_gmail_token as clear_stored_gmail_token,
+)
+from credential_store import (
+    has_gmail_client_config as has_stored_gmail_client_config,
+)
+from credential_store import (
+    has_gmail_token as has_stored_gmail_token,
 )
 from paths import CREDENTIALS_PATH, GMAIL_CREDENTIALS_FILE, TOKEN_PATH
 
@@ -41,6 +50,7 @@ def _clear_token() -> None:
             TOKEN_PATH.unlink()
     except Exception:
         pass
+
 
 def _find_credentials_file() -> Path | None:
     """
@@ -110,7 +120,9 @@ def _load_stored_token() -> Credentials | None:
         return Credentials.from_authorized_user_info(payload)
     except Exception as exc:
         _clear_token()
-        raise GmailAuthError("Stored Gmail token is invalid. Reload credentials in the settings panel.") from exc
+        raise GmailAuthError(
+            "Stored Gmail token is invalid. Reload credentials in the settings panel."
+        ) from exc
 
 
 def _persist_token(creds: Credentials) -> None:
@@ -141,7 +153,9 @@ def _load_legacy_token() -> Credentials | None:
     except GmailAuthError:
         raise
     except Exception as exc:
-        raise GmailAuthError("Saved Gmail token is unreadable. Reload credentials in the settings panel.") from exc
+        raise GmailAuthError(
+            "Saved Gmail token is unreadable. Reload credentials in the settings panel."
+        ) from exc
 
 
 def _load_client_config() -> dict:
@@ -152,7 +166,9 @@ def _load_client_config() -> dict:
             if isinstance(payload, dict):
                 return payload
         except Exception as exc:
-            raise GmailAuthError("Stored Gmail credentials are invalid. Reload credentials in the settings panel.") from exc
+            raise GmailAuthError(
+                "Stored Gmail credentials are invalid. Reload credentials in the settings panel."
+            ) from exc
 
     cred_file = _find_credentials_file()
     if not cred_file:
@@ -166,7 +182,9 @@ def _load_client_config() -> dict:
     except (CredentialStoreError, ValueError) as exc:
         raise GmailAuthError(str(exc)) from exc
     except Exception as exc:
-        raise GmailAuthError("Gmail credentials file could not be read. Reload it in the settings panel.") from exc
+        raise GmailAuthError(
+            "Gmail credentials file could not be read. Reload it in the settings panel."
+        ) from exc
 
     if cred_file == CREDENTIALS_PATH:
         try:
@@ -177,12 +195,13 @@ def _load_client_config() -> dict:
     return payload
 
 
-# ------------------------------------------------------------------------ 
+# ------------------------------------------------------------------------
 def get_html_from_message(msg):
     """
     Extracts and decodes the HTML part from a Gmail 'full' message.
     Always returns a proper Unicode string (or None).
     """
+
     def walk_parts(part):
         mime_type = part.get("mimeType", "")
         body = part.get("body", {})
@@ -212,9 +231,12 @@ def get_html_from_message(msg):
 
     return walk_parts(msg["payload"])
 
-# ------------------------------------------------------------------------ 
+
+# ------------------------------------------------------------------------
 def gmail_authenticate():
-    SCOPES = ['https://mail.google.com/'] # Request all access (permission to read/send/receive emails, manage the inbox, and more)
+    SCOPES = [
+        "https://mail.google.com/"
+    ]  # Request all access (permission to read/send/receive emails, manage the inbox, and more)
 
     creds = None
     creds = _load_stored_token() or _load_legacy_token()
@@ -225,7 +247,9 @@ def gmail_authenticate():
                 creds.refresh(Request())
             except RefreshError as exc:
                 _clear_token()
-                raise GmailAuthError("Gmail access was revoked or expired. Reload credentials in the settings panel to re-authorize.") from exc
+                raise GmailAuthError(
+                    "Gmail access was revoked or expired. Reload credentials in the settings panel to re-authorize."
+                ) from exc
             except Exception as exc:
                 _clear_token()
                 raise GmailAuthError(f"Gmail refresh failed: {exc}") from exc
@@ -235,55 +259,66 @@ def gmail_authenticate():
             creds = flow.run_local_server(port=0)
         _persist_token(creds)
     try:
-        return build('gmail', 'v1', credentials=creds)
+        return build("gmail", "v1", credentials=creds)
     except HttpError as exc:
         _clear_token()
         raise GmailAuthError("Gmail access failed; please reauthorize.") from exc
 
-# ------------------------------------------------------------------------ 
+
+# ------------------------------------------------------------------------
 def search_messages(service, query):
     try:
-        result = service.users().messages().list(userId='me',q=query).execute()
-        messages = [ ]
-        if 'messages' in result:
-            messages.extend(result['messages'])
-        while 'nextPageToken' in result:
-            page_token = result['nextPageToken']
-            result = service.users().messages().list(userId='me',q=query, pageToken=page_token).execute()
-            if 'messages' in result:
-                messages.extend(result['messages'])
+        result = service.users().messages().list(userId="me", q=query).execute()
+        messages = []
+        if "messages" in result:
+            messages.extend(result["messages"])
+        while "nextPageToken" in result:
+            page_token = result["nextPageToken"]
+            result = (
+                service.users()
+                .messages()
+                .list(userId="me", q=query, pageToken=page_token)
+                .execute()
+            )
+            if "messages" in result:
+                messages.extend(result["messages"])
         return messages
     except Exception as exc:
         if type(exc) == HttpError:
             if getattr(exc, "status_code", None) == 401 or (exc.resp and exc.resp.status == 401):
                 _clear_token()
-                raise GmailAuthError("Gmail access revoked. Re-load the credentials in the settings and re-authorize.") from exc
+                raise GmailAuthError(
+                    "Gmail access revoked. Re-load the credentials in the settings and re-authorize."
+                ) from exc
         elif type(exc) == RefreshError:
             _clear_token()
-            raise GmailAuthError("Gmail access revoked. Re-load the credentials in the settings and re-authorize.") from exc
+            raise GmailAuthError(
+                "Gmail access revoked. Re-load the credentials in the settings and re-authorize."
+            ) from exc
         raise
 
-# ------------------------------------------------------------------------ 
+
+# ------------------------------------------------------------------------
 def get_messages(service, ids, format, batch_size, log=print):
     idx = 0
     emails = {}
 
     while idx < len(ids):
         if log:
-            log(f'Downloading messages {idx} to {min(idx+batch_size, len(ids))}')
+            log(f"Downloading messages {idx} to {min(idx + batch_size, len(ids))}")
         batch = service.new_batch_http_request()
-        for id in ids[idx:idx+batch_size]:
-            batch.add(service.users().messages().get(userId = 'me', id = id, format=format))
+        for id in ids[idx : idx + batch_size]:
+            batch.add(service.users().messages().get(userId="me", id=id, format=format))
         batch.execute()
         response_keys = [key for key in batch._responses]
 
         for key in response_keys:
             email_data = json.loads(batch._responses[key][1])
-            if 'error' in email_data:
-                err_msg = email_data['error']['message']
-                if email_data['error']['code'] == 429:
+            if "error" in email_data:
+                err_msg = email_data["error"]["message"]
+                if email_data["error"]["code"] == 429:
                     raise Exception(f"{err_msg} Try reducing batch size using argument --batch.")
-                elif email_data['error']['code'] == 401:
+                elif email_data["error"]["code"] == 401:
                     _clear_token()
                     raise GmailAuthError("Gmail access revoked; please reauthorize.")
                 else:
