@@ -10,7 +10,8 @@ Covers the acceptance for the WP-06 fixes:
   absurdly large value is clamped down to ``GMAIL_MAX_RESULTS_HARD``.
 - CQ-32/LOG-19 (delete half): the always-null parse-time ``img_url`` capture is
   gone from the parser, yet the live decode/parse path still yields identical
-  release output and the release dict keeps a stable null ``img_url`` key.
+  release output. Since WP-14 the release dict carries no ``img_url`` key at
+  all (LOG-19 finish).
 - CQ-01/PY-14: the dead blocks are gone (str-email fallback, always-true all-None
   guard, ``--batch`` untruthful message, ``type(exc) ==`` comparisons) — and
   ``mark_dates_not_scraped`` is deliberately RETAINED for WP-15/LOG-3.
@@ -178,9 +179,9 @@ def test_album_fixture_parses_unchanged_through_construct_release_list(emails):
     assert rel["page_name"] == "Midnight Tapes"
     assert rel["is_track"] is False
     assert rel["date"] == "2025-06-16"
-    # Release-dict shape stays valid: img_url present, always None (no parsing).
-    assert "img_url" in rel
-    assert rel["img_url"] is None
+    # Release-dict shape (schema v2): the always-null img_url key is gone
+    # (WP-14 · LOG-19) — artwork is enrichment state, never a parse-time field.
+    assert "img_url" not in rel
 
 
 def test_track_fixture_parses_unchanged_through_construct_release_list(emails):
@@ -191,7 +192,7 @@ def test_track_fixture_parses_unchanged_through_construct_release_list(emails):
 
     assert len(releases) == 1
     assert releases[0]["is_track"] is True
-    assert releases[0]["img_url"] is None
+    assert "img_url" not in releases[0]
 
 
 def test_parser_returns_none_placeholder_not_a_parsed_img(emails):

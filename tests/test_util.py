@@ -106,9 +106,9 @@ def test_construct_release_shape_and_field_mapping():
         release_title="Title",
         page_name="Page",
         release_id=42,
+        source="gmail",
     )
     assert rel == {
-        "img_url": None,
         "date": "2025-06-16",
         "artist": "Artist",
         "title": "Title",
@@ -116,10 +116,11 @@ def test_construct_release_shape_and_field_mapping():
         "url": "https://a.bandcamp.com/track/x",
         "release_id": 42,
         "is_track": True,
+        "source": "gmail",
     }
-    # img_url is a stable null key (CQ-32): present, always None.
-    assert "img_url" in rel
-    assert rel["img_url"] is None
+    # img_url is gone from the model (WP-14 · LOG-19): artwork is enrichment
+    # state (art_url on the embed record), never a parse-time field.
+    assert "img_url" not in rel
 
 
 def test_construct_release_defaults_are_none():
@@ -127,7 +128,6 @@ def test_construct_release_defaults_are_none():
 
     rel = util.construct_release()
     assert set(rel) == {
-        "img_url",
         "date",
         "artist",
         "title",
@@ -135,8 +135,16 @@ def test_construct_release_defaults_are_none():
         "url",
         "release_id",
         "is_track",
+        "source",
     }
     assert all(v is None for v in rel.values())
+
+
+def test_construct_release_canonicalizes_url():
+    import util
+
+    rel = util.construct_release(release_url="HTTP://Artist.Bandcamp.com/album/X/?x=1#f")
+    assert rel["url"] == "https://artist.bandcamp.com/album/X"
 
 
 # ---------------------------------------------------------------------------

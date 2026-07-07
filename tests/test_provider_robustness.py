@@ -590,7 +590,9 @@ def test_wrong_imap_folder_writes_no_empty_day_records_and_is_visible(frozen_tod
     assert emitter.days_scraped == 0
     status = _read_status(june(10), june(12))
     assert not any(status.values())
-    assert not paths.EMPTY_DATES_PATH.exists() or paths.EMPTY_DATES_PATH.read_text() == "[]"
+    # LOG-11: the ledger is the only per-day store — nothing may resurrect the
+    # retired no_results_dates.json file.
+    assert not (paths.DATA_DIR / "no_results_dates.json").exists()
 
     diagnostics = [e for e in events if "0 Bandcamp messages" in e["text"]]
     assert diagnostics, "the mis-selected folder must be visible, not silent"

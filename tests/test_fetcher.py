@@ -186,7 +186,14 @@ def test_disallowed_urls_rejected_identical_bodies_no_fetch(
     fake = _fake_network(monkeypatch, bandcamp_mod, FakeResponse(OK_PAGE))
     client = server_mod.app.test_client()
 
-    responses = [client.get("/embed-meta", query_string={"url": u}) for u in DISALLOWED_URLS]
+    # WP-14 · LOG-9: the route canonicalizes its url param before validation,
+    # which upgrades an http:// bandcamp link to its canonical https form —
+    # so the "not https" case is only a *direct-function* reject now (see
+    # test_disallowed_urls_raise_without_fetch). Private-IP hosts and
+    # non-cached custom domains stay rejected at the route: canonicalization
+    # never changes their host.
+    route_disallowed = [u for u in DISALLOWED_URLS if not u.startswith("http://")]
+    responses = [client.get("/embed-meta", query_string={"url": u}) for u in route_disallowed]
 
     for resp in responses:
         assert resp.status_code == 400

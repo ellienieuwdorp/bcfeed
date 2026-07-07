@@ -5,21 +5,25 @@ This module is the single home for the fetch → parse → cache-write path behi
 negative) is returned without touching the network, and every fetch outcome is
 recorded so failures are not refetched before their retry TTL (PERF-2).
 
-Embed record shape (LOG-20 contract, written from day one):
+Embed record shape (LOG-20 contract — the record is the single owner of
+enrichment state):
 
-- ok:    ``{status: "ok", release_id, is_track, embed_url, description,
-  fetched_at}`` — ``description`` is ``""`` when the page was fetched but had
-  none (distinguishes fetched-but-none from never-fetched). When the page
-  carries ``og:image`` the record also has ``art_url`` (LOG-19 capture half);
-  the key is absent when the page had none (positive records never refetch,
-  so absence is stable).
+- ok:    ``{status: "ok", release_id, is_track, description, fetched_at}`` —
+  ``description`` is ``""`` when the page was fetched but had none
+  (distinguishes fetched-but-none from never-fetched). When the page carries
+  ``og:image`` the record also has ``art_url`` (LOG-19 capture half); the key
+  is absent when the page had none (positive records never refetch, so
+  absence is stable). ``embed_url`` is NOT stored — it is derived from
+  ``release_id`` + ``is_track`` via ``build_embed_url`` at response time
+  (WP-14 · LOG-20: stored derived state could go stale).
 - error: ``{status: "error", code, fetched_at}`` with
   ``code ∈ {"http_<status>", "no_meta", "network"}``; retried only after
   ``EMBED_ERROR_RETRY_TTL_SECONDS``.
 
 Legacy flat entries ``{release_id, is_track, embed_url, description}`` are
-lazily upgraded to ``status: "ok"`` on read (LOG-5 migration); WP-14 performs
-the one-shot rewrite and drops the stored ``embed_url``.
+lazily upgraded to ``status: "ok"`` on read (LOG-5 migration); the WP-14
+one-shot rewrite (migrations.py) drops stored ``embed_url`` keys and
+canonicalizes the URL keys.
 
 WP-12 hardening — all Bandcamp HTTP goes through ``fetch_release_page``, the
 single choke point (LOG-7): token-bucket rate limit (~1 req/s sustained,
@@ -466,11 +470,12 @@ def get_embed_meta(url: str, *, now: float | None = None) -> dict:
         else:
             item_id = data.get("item_id")
             is_track = data.get("item_type") in ("track", "t")
+            # embed_url is deliberately NOT stored (LOG-20): consumers derive
+            # it from release_id + is_track via build_embed_url.
             record = {
                 "status": "ok",
                 "release_id": item_id,
                 "is_track": is_track,
-                "embed_url": build_embed_url(item_id, is_track),
                 "description": extract_bandcamp_description(soup) or "",
                 "fetched_at": int(now),
             }

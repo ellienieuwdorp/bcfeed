@@ -36,8 +36,12 @@ GMAIL_CREDENTIALS_FILE = "credentials.json"
 VIEWED_PATH = DATA_DIR / "viewed_state.json"
 STARRED_PATH = DATA_DIR / "starred_state.json"
 RELEASE_CACHE_PATH = DATA_DIR / "release_cache.json"
-EMPTY_DATES_PATH = DATA_DIR / "no_results_dates.json"
+# The former no_results_dates.json store is gone (WP-14 · LOG-11): empty days
+# are recorded in the scrape_status ledger itself. migrations.py folds any
+# legacy file in (and deletes it) by literal filename — no path constant here.
 SCRAPE_STATUS_PATH = DATA_DIR / "scrape_status.json"
+# Sidecar recording the store schema version (WP-14 · LOG-21).
+SCHEMA_META_PATH = DATA_DIR / "meta.json"
 EMBED_CACHE_PATH = DATA_DIR / "embed_cache.json"
 # Legacy import source only (never written): a pre-keychain credentials.json
 # is migrated into the keychain on first use, then deleted. The legacy pickle

@@ -1,75 +1,46 @@
 """
 Session and release metadata persistence utilities.
 
-Stores Gmail-scraped release metadata (not Bandcamp-enriched) keyed by
+Stores provider-fetched release metadata (not Bandcamp-enriched) keyed by
 release date so we can reuse it across runs and avoid re-downloading
-messages for dates we've already processed. Also persists empty-date
-ranges and scrape status for the same date buckets.
+messages for dates we've already processed.
+
+Schema v2 (WP-14 · LOG-11/LOG-21/LOG-22): "which days are done" is ONE
+per-day ledger, ``scrape_status.json``::
+
+    { "YYYY-MM-DD": {"empty": bool, "source": "gmail" | "imap" | null} }
+
+A day present in the ledger has been checked with the email provider;
+``empty`` distinguishes checked-and-no-results from checked-with-results, and
+``source`` records which provider produced the record (set by the pipeline —
+the WP-15 provider-switch semantics consume it). The former
+``no_results_dates.json`` second store is folded in and deleted by the one-shot
+migration (migrations.py). Legacy v1 ledgers (a plain list of ISO dates) are
+still readable pre-migration.
+
+Today is never recorded as checked (it isn't final yet) — the ``exclude_today``
+invariant is enforced on every ledger write and read.
 """
 
 from __future__ import annotations
 
 import datetime
-from collections.abc import Callable, Iterable
-from pathlib import Path
+from collections.abc import Iterable
 
 import json_store
-from paths import EMPTY_DATES_PATH, RELEASE_CACHE_PATH, SCRAPE_STATUS_PATH
-from util import dedupe_by_url
+from paths import RELEASE_CACHE_PATH, SCRAPE_STATUS_PATH
+from util import canonical_release_url, dedupe_by_url
 from util import today as _today
 
 CacheType = dict[str, list[dict]]
+LedgerType = dict[datetime.date, dict]
 
 CACHE_PATH = RELEASE_CACHE_PATH
-EMPTY_PATH = EMPTY_DATES_PATH
 
 
 def _load_cache() -> CacheType:
     data = json_store.read_json(CACHE_PATH, {})
     return data if isinstance(data, dict) else {}
-
-
-def _save_cache(cache: CacheType) -> None:
-    json_store.write_json(CACHE_PATH, cache, indent=2)
-
-
-def _dates_from_raw(raw) -> set[datetime.date]:
-    dates: set[datetime.date] = set()
-    for item in raw if isinstance(raw, list) else []:
-        day = _to_date(item)
-        if day:
-            dates.add(day)
-    return dates
-
-
-def _load_date_set(path: Path) -> set[datetime.date]:
-    return _dates_from_raw(json_store.read_json(path, []))
-
-
-def _update_date_set(
-    path: Path,
-    mutate: Callable[[set[datetime.date]], set[datetime.date]],
-    *,
-    drop_today: bool = False,
-) -> None:
-    """Atomically load-mutate-save a date-set store through json_store."""
-
-    def mutator(raw):
-        dates = mutate(_dates_from_raw(raw))
-        if drop_today:
-            # Always treat today as not-scraped.
-            dates.discard(_today())
-        return sorted(day.isoformat() for day in dates)
-
-    json_store.update_json(path, mutator, [], indent=2)
-
-
-def _load_empty_dates() -> set[datetime.date]:
-    return _load_date_set(EMPTY_PATH)
-
-
-def _load_scrape_status() -> set[datetime.date]:
-    return _load_date_set(SCRAPE_STATUS_PATH)
 
 
 def _to_date(val) -> datetime.date | None:
@@ -85,6 +56,86 @@ def _to_date(val) -> datetime.date | None:
             except ValueError:
                 continue
     return None
+
+
+# ---------------------------------------------------------------------------
+# The per-day ledger (schema v2)
+# ---------------------------------------------------------------------------
+def _ledger_from_raw(raw) -> LedgerType:
+    """Parse the on-disk ledger. Tolerates the legacy v1 list-of-dates shape."""
+    ledger: LedgerType = {}
+    if isinstance(raw, dict):
+        for key, value in raw.items():
+            day = _to_date(key)
+            if not day:
+                continue
+            record = value if isinstance(value, dict) else {}
+            ledger[day] = {
+                "empty": bool(record.get("empty", False)),
+                "source": record.get("source"),
+            }
+    elif isinstance(raw, list):
+        # Legacy v1 (pre-migration read tolerance): presence means checked.
+        for item in raw:
+            day = _to_date(item)
+            if day:
+                ledger[day] = {"empty": False, "source": None}
+    return ledger
+
+
+def _load_ledger() -> LedgerType:
+    return _ledger_from_raw(json_store.read_json(SCRAPE_STATUS_PATH, {}))
+
+
+def _serialize_ledger(ledger: LedgerType) -> dict:
+    return {
+        day.isoformat(): {"empty": ledger[day]["empty"], "source": ledger[day]["source"]}
+        for day in sorted(ledger)
+    }
+
+
+def _update_ledger(mutate) -> None:
+    """Atomically load-mutate-save the ledger through json_store.
+
+    Today is always dropped on save: the exclude-today invariant means the
+    ledger can never claim today is checked (its emails are still arriving).
+    """
+
+    def mutator(raw):
+        ledger = mutate(_ledger_from_raw(raw))
+        ledger.pop(_today(), None)
+        return _serialize_ledger(ledger)
+
+    json_store.update_json(SCRAPE_STATUS_PATH, mutator, {}, indent=2)
+
+
+def _record_checked_days(
+    days: Iterable[datetime.date], *, empty: bool, source: str | None
+) -> None:
+    """Merge day records into the ledger.
+
+    Merge rule for a day already present: a checked-with-results record wins
+    over checked-and-empty (``empty`` only stays True when both agree — data
+    is never demoted to "empty" by a later zero-result mark for the same day),
+    and a concrete ``source`` wins over an unknown one.
+    """
+    days = set(days)
+    if not days:
+        return
+
+    def mutate(ledger: LedgerType) -> LedgerType:
+        for day in days:
+            existing = ledger.get(day)
+            if existing:
+                ledger[day] = {
+                    "empty": existing["empty"] and empty,
+                    "source": source or existing["source"],
+                }
+            else:
+                ledger[day] = {"empty": empty, "source": source}
+        return ledger
+
+    _update_ledger(mutate)
 
 
 def get_full_release_cache() -> list[dict]:
@@ -115,9 +166,15 @@ def _range_days(
     return days
 
 
-def mark_dates_scraped(dates: Iterable[datetime.date], *, exclude_today: bool = True) -> None:
+def mark_dates_scraped(
+    dates: Iterable[datetime.date],
+    *,
+    exclude_today: bool = True,
+    empty: bool = False,
+    source: str | None = None,
+) -> None:
     """
-    Mark specific dates as having been scraped from Gmail.
+    Mark specific dates as having been checked with the email provider.
     """
     today = _today()
     to_add = {
@@ -125,52 +182,79 @@ def mark_dates_scraped(dates: Iterable[datetime.date], *, exclude_today: bool = 
         for day in dates
         if isinstance(day, datetime.date) and not (exclude_today and day == today)
     }
-    _update_date_set(SCRAPE_STATUS_PATH, lambda scraped: scraped | to_add, drop_today=True)
+    _record_checked_days(to_add, empty=empty, source=source)
 
 
 def mark_date_range_scraped(
-    start: datetime.date, end: datetime.date, *, exclude_today: bool = True
+    start: datetime.date,
+    end: datetime.date,
+    *,
+    exclude_today: bool = True,
+    empty: bool = False,
+    source: str | None = None,
 ) -> None:
-    """Mark a contiguous date range as scraped."""
+    """Mark a contiguous date range as checked."""
     if start > end:
         return
     to_add = _range_days(start, end, exclude_today=exclude_today)
-    _update_date_set(SCRAPE_STATUS_PATH, lambda scraped: scraped | to_add, drop_today=True)
+    _record_checked_days(to_add, empty=empty, source=source)
 
 
 def mark_dates_not_scraped(dates: Iterable[datetime.date]) -> None:
-    """Explicitly mark dates as not-scraped (removes from scraped set).
+    """Explicitly mark dates as not-scraped (removes their ledger records).
 
     # retained for WP-15/LOG-3: currently uncalled, but the re-check/reset flow
     # resurrects it — do NOT delete as dead code (CQ-01 deviation).
     """
     to_drop = {day for day in dates if isinstance(day, datetime.date)}
-    _update_date_set(SCRAPE_STATUS_PATH, lambda scraped: scraped - to_drop, drop_today=True)
+    if not to_drop:
+        return
+
+    def mutate(ledger: LedgerType) -> LedgerType:
+        for day in to_drop:
+            ledger.pop(day, None)
+        return ledger
+
+    _update_ledger(mutate)
 
 
 def scrape_status_for_range(start: datetime.date, end: datetime.date) -> dict[str, bool]:
     """
-    Return a mapping of ISO date -> scraped flag for the inclusive range.
-    Today's date is always False (not scraped).
+    Return a mapping of ISO date -> checked flag for the inclusive range.
+    Today's date is always False (not checked).
     """
     status = {}
-    scraped = _load_scrape_status()
+    checked = _load_ledger()
     today = _today()
     cursor = start
     one_day = datetime.timedelta(days=1)
     while cursor <= end:
-        is_scraped = cursor in scraped and cursor != today
-        status[cursor.isoformat()] = is_scraped
+        status[cursor.isoformat()] = cursor in checked and cursor != today
         cursor += one_day
     return status
 
 
-def persist_release_metadata(releases: Iterable[dict], *, exclude_today: bool = True) -> None:
+def persist_release_metadata(
+    releases: Iterable[dict], *, exclude_today: bool = True, source: str | None = None
+) -> None:
     """
     Save release metadata into the cache, keyed by release date.
     Skips today's date when exclude_today is True.
+
+    URLs are canonicalized on the way in (LOG-9 store-write half), so the
+    release cache is only ever keyed by canonical URLs. ``source`` names the
+    provider whose run produced the data (recorded on the day's ledger entry);
+    pass ``None`` when merely re-persisting cached rows so an existing
+    provider attribution is never overwritten.
     """
-    releases = list(releases)
+    canonicalized: list[dict] = []
+    for release in releases:
+        url = release.get("url")
+        canonical = canonical_release_url(url) if url else None
+        if canonical and canonical != url:
+            release = {**release, "url": canonical}
+        canonicalized.append(release)
+    releases = canonicalized
     today = _today()
     scraped_days: set[datetime.date] = set()
 
@@ -191,10 +275,10 @@ def persist_release_metadata(releases: Iterable[dict], *, exclude_today: bool = 
         return cache
 
     json_store.update_json(CACHE_PATH, mutate_cache, {}, indent=2)
-    # if we now have data for a day that was previously marked empty, clear that marker
-    _update_date_set(EMPTY_PATH, lambda empty_dates: empty_dates - scraped_days)
+    # Invariant (I2): the cache write above precedes the ledger mark below —
+    # a day is only ever recorded checked once its data is durable.
     if scraped_days:
-        mark_dates_scraped(scraped_days, exclude_today=exclude_today)
+        mark_dates_scraped(scraped_days, exclude_today=exclude_today, empty=False, source=source)
 
 
 def cached_releases_for_range(
@@ -202,13 +286,12 @@ def cached_releases_for_range(
 ) -> tuple[list[dict], list[datetime.date]]:
     """
     Return (cached_releases, missing_dates) for the inclusive date range.
-    missing_dates are days that have not been scraped yet.
+    missing_dates are days that have not been checked yet — a day is covered
+    either by cached releases or by a ledger record (which includes
+    checked-and-empty days, LOG-11).
     """
     cache = _load_cache()
-    empty_dates = _load_empty_dates()
-    scraped_dates = _load_scrape_status()
-    # Treat explicitly empty days as already scraped (so they are not missing).
-    scraped_dates.update(empty_dates)
+    checked = _load_ledger()
     cursor = start
     cached: list[dict] = []
     missing: list[datetime.date] = []
@@ -218,7 +301,7 @@ def cached_releases_for_range(
         releases_for_day = cache.get(iso)
         if releases_for_day:
             cached.extend(releases_for_day)
-        elif cursor not in scraped_dates:
+        elif cursor not in checked:
             missing.append(cursor)
         cursor += one_day
     return dedupe_by_url(cached), missing
@@ -242,14 +325,18 @@ def collapse_date_ranges(dates: list[datetime.date]) -> list[tuple[datetime.date
 
 
 def persist_empty_date_range(
-    start: datetime.date, end: datetime.date, *, exclude_today: bool = True
+    start: datetime.date,
+    end: datetime.date,
+    *,
+    exclude_today: bool = True,
+    source: str | None = None,
 ) -> None:
     """
-    Record a contiguous date range that returned no Gmail results so we avoid
-    querying it again. Optionally excludes today's date.
+    Record a contiguous date range that returned no provider results so we
+    avoid querying it again. One ledger write: the days are checked with
+    ``empty: true`` (LOG-11 — no second store). Optionally excludes today.
     """
     if start > end:
         return
     to_add = _range_days(start, end, exclude_today=exclude_today)
-    _update_date_set(EMPTY_PATH, lambda empty_dates: empty_dates | to_add)
-    mark_date_range_scraped(start, end, exclude_today=exclude_today)
+    _record_checked_days(to_add, empty=True, source=source)

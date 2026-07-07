@@ -10,7 +10,7 @@ Covered:
 * the single static-asset route serves /dashboard.css and /dashboard.js with
   the same URLs/mimetypes as the former per-file routes (WP-18 prep) and keeps
   the WP-08 generic-404 behavior;
-* /releases still surfaces embed_url + description for ok embed records —
+* /releases still surfaces derived embed_url + has_description for ok embed records —
   both new-shape and legacy flat entries;
 * grep-proof source guards: no requests/BeautifulSoup/ImapClient usage left in
   server.py, and provider_factory never imports Flask.
@@ -269,6 +269,8 @@ def test_dashboard_html_route_unchanged(server_mod):
 # /releases still surfaces embed enrichment for ok records
 # ---------------------------------------------------------------------------
 def test_releases_surfaces_ok_record_enrichment(server_mod, seed, make_release, frozen_today):
+    # WP-14 · LOG-20: embed_url is derived (release_id + is_track), the
+    # description body stays out of the payload (has_description instead).
     url = "https://a.bandcamp.com/album/x"
     seed.releases({"2025-06-16": [make_release(release_url=url, date="2025-06-16")]})
     seed.embed_cache(
@@ -277,7 +279,6 @@ def test_releases_surfaces_ok_record_enrichment(server_mod, seed, make_release, 
                 "status": "ok",
                 "release_id": 555,
                 "is_track": False,
-                "embed_url": "https://bandcamp.com/EmbeddedPlayer/album=555/",
                 "description": "A fine record.",
                 "fetched_at": 1_750_000_000,
             }
@@ -286,8 +287,9 @@ def test_releases_surfaces_ok_record_enrichment(server_mod, seed, make_release, 
     resp = server_mod.app.test_client().get("/releases")
     assert resp.status_code == 200
     rel = resp.get_json()["releases"][0]
-    assert rel["embed_url"] == "https://bandcamp.com/EmbeddedPlayer/album=555/"
-    assert rel["description"] == "A fine record."
+    assert "album=555" in rel["embed_url"]
+    assert rel["has_description"] is True
+    assert "description" not in rel
     assert rel["release_id"] == 555
 
 
@@ -298,6 +300,7 @@ def test_releases_skips_error_records(server_mod, seed, make_release, frozen_tod
     rel = server_mod.app.test_client().get("/releases").get_json()["releases"][0]
     assert "embed_url" not in rel
     assert "description" not in rel
+    assert "has_description" not in rel
 
 
 # ---------------------------------------------------------------------------

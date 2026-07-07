@@ -9,8 +9,9 @@ Covered:
 * a 404 page is fetched once, recorded ``status: "error"`` with an ``http_404``
   code, and not refetched before the retry TTL; after the TTL one retry runs
   (LOG-5 negative caching);
-* legacy flat cache entries lazily upgrade on read and still serve
-  ``embed_url``/``description`` without a fetch (LOG-5 migration);
+* legacy flat cache entries lazily upgrade on read and still serve their
+  metadata/``description`` without a fetch (LOG-5 migration; ``embed_url``
+  is derived since WP-14);
 * a page whose ``bc-page-properties`` content is neither JSON nor a Python
   literal yields ``None`` from ``extract_bc_meta`` — no exception — and the
   route answers with a generic JSON ``{error}`` 502, never an HTML 500
@@ -112,7 +113,8 @@ def test_two_get_embed_meta_calls_one_fetch(bandcamp_mod, monkeypatch):
     assert second == first
     assert first["release_id"] == 4242
     assert first["is_track"] is False
-    assert "album=4242" in first["embed_url"]
+    # WP-14 · LOG-20: embed_url is derived at response time, never stored.
+    assert "embed_url" not in first
     assert "test album about text" in first["description"]
     assert isinstance(first["fetched_at"], int)
 
@@ -197,7 +199,7 @@ def test_legacy_entry_lazily_upgrades_and_serves_without_fetch(bandcamp_mod, see
     record = bandcamp_mod.get_embed_meta(URL)
     assert fake.calls == 0
     assert record["status"] == "ok"
-    assert record["embed_url"] == "https://bandcamp.com/EmbeddedPlayer/album=555/"
+    assert record["release_id"] == 555
     assert record["description"] == "A fine record."
     assert record["fetched_at"] is None
 
@@ -219,7 +221,8 @@ def test_legacy_entry_served_by_route(server_mod, bandcamp_mod, seed, monkeypatc
     assert fake.calls == 0
     assert resp.status_code == 200
     data = resp.get_json()
-    assert data["embed_url"] == "https://bandcamp.com/EmbeddedPlayer/track=555/"
+    # The route derives embed_url from release_id + is_track (WP-14 · LOG-20).
+    assert "track=555" in data["embed_url"]
     assert data["description"] == "A fine record."
     assert data["is_track"] is True
 
@@ -275,7 +278,7 @@ def test_empty_description_cached_and_not_refetched(bandcamp_mod, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# On-disk record shape (LOG-20-compatible)
+# On-disk record shape (LOG-20: no stored embed_url — derived state)
 # ---------------------------------------------------------------------------
 def test_written_record_shape(bandcamp_mod, monkeypatch, isolated_data_dir):
     import paths
@@ -289,7 +292,6 @@ def test_written_record_shape(bandcamp_mod, monkeypatch, isolated_data_dir):
             "status": "ok",
             "release_id": 4242,
             "is_track": False,
-            "embed_url": bandcamp_mod.build_embed_url(4242, False),
             "description": "A test album about text.",
             "fetched_at": 42,
         }

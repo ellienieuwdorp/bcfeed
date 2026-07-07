@@ -570,10 +570,29 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
   // click on the same row share one network fetch instead of racing.
   const embedFetchesInFlight = new Map();
 
-  async function ensureEmbed(release) {
-    // Treat "embed_url present" as cached: rows whose page yields no
-    // description would otherwise be re-fetched on every render.
-    if (release.embed_url) {
+  // A row is enriched once it carries embed data AND a known description
+  // state: /releases sends has_description (a boolean — the body itself no
+  // longer rides the table payload), and a direct /embed-meta fetch sets the
+  // description string (possibly empty).
+  function isEnriched(release) {
+    return Boolean(
+      release.embed_url &&
+        (typeof release.has_description === "boolean" ||
+          typeof release.description === "string"),
+    );
+  }
+
+  async function ensureEmbed(release, opts = {}) {
+    // The table payload carries no description bodies; the detail row asks
+    // for one lazily (withDescription) and /embed-meta serves it from the
+    // server's cache. has_description === false means "fetched, none" — no
+    // request needed to know there is nothing to show.
+    const needsDescription = Boolean(
+      opts.withDescription &&
+        release.description === undefined &&
+        release.has_description !== false,
+    );
+    if (release.embed_url && !needsDescription) {
       return release.embed_url;
     }
     if (!release.url || !embedProxyUrl) return null;
@@ -589,9 +608,11 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
       if (typeof data.is_track === "boolean") {
         release.is_track = data.is_track;
       }
-      if (data.description) {
+      if (typeof data.description === "string") {
         release.description = data.description;
+        release.has_description = data.description.length > 0;
       }
+      if (data.art_url) release.art_url = data.art_url;
       return embedUrl;
     };
 
@@ -724,7 +745,7 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
       populateLog.style.color = allPopulated ? "var(--muted)" : "#64a8ff";
 
       const rangeReleases = releases.filter((r) => withinSelectedRange(r) && r.url);
-      const hasPreloadableReleases = rangeReleases.some((r) => !(r.embed_url && r.description));
+      const hasPreloadableReleases = rangeReleases.some((r) => !isEnriched(r));
       if (allPopulated && hasPreloadableReleases) {
         msg = `\n\n<span style="color:#64a8ff;">For faster browsing, "Star" the releases you're interested in to pre-load their Bandcamp player widgets, then filter using the "Starred" button at the top right.\n\nYou can also click 'Preload release data' to pre-fetch Bandcamp players for all releases in this date range.</span>`;
         populateLog.innerHTML += msg.replace(/\n/g, "<br>");
@@ -773,7 +794,7 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
       headerCountLabel.textContent = label;
     }
     const rangeReleases = releases.filter((r) => withinSelectedRange(r) && r.url);
-    const hasPendingPreload = rangeReleases.some((r) => !(r.embed_url && r.description));
+    const hasPendingPreload = rangeReleases.some((r) => !isEnriched(r));
     const fromKey = state.dateFilterFrom || state.dateFilterTo || "";
     const toKey = state.dateFilterTo || state.dateFilterFrom || "";
     const hasScrapedRange =
@@ -1002,7 +1023,9 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
         if (descTarget) {
           descTarget.textContent = release.description || "Loading description…";
         }
-        ensureEmbed(release).then((embedUrl) => {
+        // The table payload no longer carries description bodies (PERF-5):
+        // the expand path asks /embed-meta for one (served from the cache).
+        ensureEmbed(release, { withDescription: true }).then((embedUrl) => {
           const safeEmbedUrl = safeHttpUrl(embedUrl);
           if (!safeEmbedUrl) {
             embedTarget.innerHTML = `<div class="detail-meta">No embed available. Is the app still running? <br><a class="link" href="${esc(safeHttpUrl(release.url) || "#")}" target="_blank" rel="noopener">Open on Bandcamp</a>.</div>`;
@@ -1228,6 +1251,9 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
       delete r.embed_url;
       delete r.release_id;
       delete r.is_track;
+      delete r.description;
+      delete r.has_description;
+      delete r.art_url;
     });
     renderTable();
     if (populateLog) {
@@ -1736,7 +1762,7 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
     const candidates = releases
       .filter((r) => withinSelectedRange(r))
       .filter((r) => r.url)
-      .filter((r) => !(r.embed_url && r.description));
+      .filter((r) => !isEnriched(r));
     const total = candidates.length;
     if (populateLog) {
       populateLog.style.color = "";

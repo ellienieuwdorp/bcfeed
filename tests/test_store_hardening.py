@@ -233,8 +233,9 @@ def test_store_formats_unchanged(server_mod, isolated_data_dir):
 
     # Embed cache stays dict-of-dicts keyed by URL on disk; since WP-11 the
     # record shape is the LOG-20 one (status/fetched_at + fields), written by
-    # bandcamp._store_embed_record through json_store. The full record-shape
-    # contract is covered in tests/test_embed_cache.py.
+    # bandcamp._store_embed_record through json_store. Since WP-14 embed_url
+    # is derived, never stored. The full record-shape contract is covered in
+    # tests/test_embed_cache.py.
     import bandcamp
 
     url = "https://a.bc.com/album/x"
@@ -244,7 +245,6 @@ def test_store_formats_unchanged(server_mod, isolated_data_dir):
             "status": "ok",
             "release_id": "123",
             "is_track": False,
-            "embed_url": "https://bandcamp.com/EmbeddedPlayer/album=123",
             "description": "",
             "fetched_at": 42,
         },
@@ -255,7 +255,6 @@ def test_store_formats_unchanged(server_mod, isolated_data_dir):
             "status": "ok",
             "release_id": "123",
             "is_track": False,
-            "embed_url": "https://bandcamp.com/EmbeddedPlayer/album=123",
             "description": "",
             "fetched_at": 42,
         }
@@ -269,9 +268,10 @@ def test_reset_caches_deletes_stores_through_json_store(server_mod, seed, isolat
     import paths
 
     seed.releases({"2025-06-01": [{"url": "https://a.bc.com/album/x", "date": "2025-06-01"}]})
-    seed.scrape_status(["2025-06-01"])
-    seed.empty_dates(["2025-06-02"])
-    seed.embed_cache({"https://a.bc.com/album/x": {"embed_url": "e"}})
+    # The v2 ledger records checked-and-empty days itself (LOG-11) — there is
+    # no second no_results_dates.json store anymore.
+    seed.scrape_status(["2025-06-01", "2025-06-02"])
+    seed.embed_cache({"https://a.bc.com/album/x": {"release_id": 1, "status": "ok"}})
     seed.viewed(["https://a.bc.com/album/x"])
     seed.starred(["https://a.bc.com/album/x"])
 
@@ -284,7 +284,6 @@ def test_reset_caches_deletes_stores_through_json_store(server_mod, seed, isolat
     assert body["errors"] == []
     assert set(body["cleared"]) == {
         "release_cache.json",
-        "no_results_dates.json",
         "scrape_status.json",
         "embed_cache.json",
         "viewed_state.json",
@@ -292,7 +291,6 @@ def test_reset_caches_deletes_stores_through_json_store(server_mod, seed, isolat
     }
     for path in (
         paths.RELEASE_CACHE_PATH,
-        paths.EMPTY_DATES_PATH,
         paths.SCRAPE_STATUS_PATH,
         paths.EMBED_CACHE_PATH,
         paths.VIEWED_PATH,

@@ -183,15 +183,12 @@ class StoreSeeder:
         normalized = {_iso(day): list(items) for day, items in mapping.items()}
         self._write(paths.RELEASE_CACHE_PATH, normalized)
 
-    def scrape_status(self, days) -> None:
+    def scrape_status(self, days, *, empty: bool = False, source: str | None = None) -> None:
+        """Seed the per-day ledger (schema v2: {date: {empty, source}})."""
         import paths
 
-        self._write(paths.SCRAPE_STATUS_PATH, sorted({_iso(d) for d in days}))
-
-    def empty_dates(self, days) -> None:
-        import paths
-
-        self._write(paths.EMPTY_DATES_PATH, sorted({_iso(d) for d in days}))
+        ledger = {_iso(d): {"empty": empty, "source": source} for d in days}
+        self._write(paths.SCRAPE_STATUS_PATH, {day: ledger[day] for day in sorted(ledger)})
 
     def viewed(self, urls) -> None:
         import paths

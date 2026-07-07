@@ -67,15 +67,19 @@ def test_config_json_shape(client):
 # /releases — cache + embed merge
 # ---------------------------------------------------------------------------
 def test_releases_merges_embed_enrichment(client, seed, make_release, frozen_today):
+    # WP-14 · LOG-20/PERF-5: the overlay adds only light fields — embed_url is
+    # DERIVED from release_id + is_track, description bodies never ride the
+    # payload (has_description flags them), and every row carries source.
     url = "https://a.bandcamp.com/album/x"
     seed.releases({"2025-06-16": [make_release(release_url=url, date="2025-06-16")]})
     seed.embed_cache(
         {
             url: {
+                "status": "ok",
                 "release_id": 555,
                 "is_track": False,
-                "embed_url": "https://bandcamp.com/EmbeddedPlayer/album=555/",
                 "description": "A fine record.",
+                "fetched_at": 42,
             }
         }
     )
@@ -85,9 +89,11 @@ def test_releases_merges_embed_enrichment(client, seed, make_release, frozen_tod
     assert len(releases) == 1
     rel = releases[0]
     assert rel["url"] == url
-    assert rel["embed_url"] == "https://bandcamp.com/EmbeddedPlayer/album=555/"
+    assert "album=555" in rel["embed_url"]
     assert rel["release_id"] == 555
-    assert rel["description"] == "A fine record."
+    assert "description" not in rel
+    assert rel["has_description"] is True
+    assert "source" in rel
 
 
 def test_releases_empty_when_no_cache(client):

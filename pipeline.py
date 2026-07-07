@@ -156,8 +156,13 @@ def _countable_days(start: datetime.date, end: datetime.date) -> int:
     return count
 
 
-def construct_release_list(emails: dict, *, log=print) -> list[dict]:
-    """Parse email messages into release lists."""
+def construct_release_list(emails: dict, *, log=print, source: str | None = None) -> list[dict]:
+    """Parse email messages into release lists.
+
+    ``source`` stamps each constructed release with the provider that produced
+    it ("gmail" | "imap") — set here at the pipeline level, never inside the
+    provider adapters (LOG-21/LOG-22 schema half).
+    """
     emit = ProgressEmitter.ensure(log)
     emit("Parsing messages...", phase="parse", current=0, total=len(emails))
     releases_unsifted = []
@@ -224,6 +229,7 @@ def construct_release_list(emails: dict, *, log=print) -> list[dict]:
                 artist_name=artist_name,
                 release_title=release_title,
                 page_name=page_name,
+                source=source,
             )
         )
 
@@ -260,7 +266,10 @@ def populate_release_cache(
     )
     releases = list(cached_releases)
 
-    # Get provider type for logging
+    # The active provider tags everything this run records: each release row
+    # and each ledger day carries source = "gmail" | "imap" (LOG-21/LOG-22
+    # schema half — the switch-behavior half is WP-15's). Set here at the
+    # pipeline level, never in the provider adapters.
     provider_type = get_current_provider_type()
     provider_name = "IMAP" if provider_type == "imap" else "Gmail"
 
@@ -278,7 +287,9 @@ def populate_release_cache(
             f"This date range has already been scraped; no {provider_name} download needed.",
             phase="cache",
         )
-        # Still need to dedupe and persist cached releases
+        # Still need to dedupe and persist cached releases. No source is
+        # passed: this run downloaded nothing, so re-persisting cached rows
+        # must not overwrite the days' original provider attribution.
         deduped = dedupe_by_date(releases, keep="last")
         persist_release_metadata(deduped, exclude_today=True)
         emit("")
@@ -347,7 +358,9 @@ def populate_release_cache(
                             level="info" if trusted else "warn",
                         )
                 if trusted:
-                    persist_empty_date_range(start_missing, end_missing, exclude_today=True)
+                    persist_empty_date_range(
+                        start_missing, end_missing, exclude_today=True, source=provider_type
+                    )
                     emit.days_scraped += _countable_days(start_missing, end_missing)
                 continue
             total_messages = len(message_ids)
@@ -385,7 +398,7 @@ def populate_release_cache(
                 emit(f"ERROR: {exc}", phase="download", level="error")
                 raise
             try:
-                new_releases = construct_release_list(emails, log=emit)
+                new_releases = construct_release_list(emails, log=emit, source=provider_type)
             except Exception as exc:
                 raise ParseError(f"Couldn't read the downloaded messages: {exc}") from exc
             emit(
@@ -416,10 +429,15 @@ def populate_release_cache(
             persist_release_metadata(
                 [release for release in deduped_so_far if release.get("url") in new_urls],
                 exclude_today=True,
+                source=provider_type,
             )
-            # Mark the entire queried span as scraped so we do not re-fetch it.
-            # This must stay the LAST step of each range.
-            mark_date_range_scraped(start_missing, end_missing, exclude_today=True)
+            # Mark the entire queried span as checked so we do not re-fetch it.
+            # This must stay the LAST step of each range. Days in the span that
+            # gained no releases are checked-and-empty; the ledger merge keeps
+            # empty=False for the days persist_release_metadata just recorded.
+            mark_date_range_scraped(
+                start_missing, end_missing, exclude_today=True, empty=True, source=provider_type
+            )
             emit.days_scraped += _countable_days(start_missing, end_missing)
     except AuthenticationError as exc:
         emit(f"ERROR: Authentication failed: {exc}", level="error")

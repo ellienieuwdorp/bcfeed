@@ -264,7 +264,7 @@ def test_midrun_provider_failure_yields_gmail_code_and_never_done(past_gate, see
 def test_parse_stage_crash_yields_parse_code_and_never_done(past_gate, seed, monkeypatch):
     import pipeline
 
-    def exploding_parse(emails, *, log=print):
+    def exploding_parse(emails, *, log=print, source=None):
         raise RuntimeError("injected parse crash")
 
     install_provider(monkeypatch, FakeProvider(three_range_setup(seed)))

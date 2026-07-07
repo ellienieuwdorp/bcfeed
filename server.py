@@ -18,7 +18,8 @@ from werkzeug.serving import WSGIRequestHandler, make_server
 
 import docs_render
 import json_store
-from bandcamp import FetchBlockedError, embed_cache_snapshot, get_embed_meta
+import migrations
+from bandcamp import FetchBlockedError, build_embed_url, embed_cache_snapshot, get_embed_meta
 from credential_store import (
     CredentialStoreError,
     has_imap_password,
@@ -35,7 +36,6 @@ from gmail_client import (
 from paths import (
     DASHBOARD_PATH,
     EMBED_CACHE_PATH,
-    EMPTY_DATES_PATH,
     GMAIL_SETUP_PATH,
     IMAP_SETUP_PATH,
     README_PATH,
@@ -67,7 +67,7 @@ from provider_factory import (
     open_imap_client as _open_imap_client,
 )
 from session_store import get_full_release_cache, scrape_status_for_range
-from util import parse_date
+from util import canonical_release_url, parse_date
 from util import today as _today
 
 app = Flask(__name__)
@@ -205,6 +205,10 @@ def find_free_port(preferred: int = 5050) -> int:
 
 
 def start_server_thread(preferred_port: int = 5050):
+    # One-shot schema migration before the server accepts requests (WP-14 ·
+    # LOG-21): legacy stores are upgraded (with .pre-v2 backups) exactly once;
+    # a versioned or fresh data dir is a no-op beyond the marker.
+    migrations.migrate()
     port = find_free_port(preferred_port)
     server, thread = start_server(port)
     return server, thread, port
@@ -221,31 +225,43 @@ def viewed_state():
     read = data.get("read")
     if not url or not isinstance(read, bool):
         return jsonify({"error": "Missing url or read flag"}), 400
-    _set_url_flag(VIEWED_PATH, url, read)
+    # Store lookups are keyed by canonical URL (LOG-9): any spelling of a
+    # release URL toggles the same row's state.
+    _set_url_flag(VIEWED_PATH, canonical_release_url(url) or url, read)
     return jsonify({"ok": True})
 
 
 @app.route("/releases", methods=["GET"])
 def releases_endpoint():
+    # LOG-20: the embed record owns enrichment state; this overlay adds only
+    # the LIGHT fields (release_id, is_track, derived embed_url, art_url,
+    # has_description). Description bodies never ride the table payload
+    # (PERF-5) — the detail row fetches them via /embed-meta on expand.
     try:
         releases = get_full_release_cache()
         embed_cache = embed_cache_snapshot()
-        if embed_cache:
-            for rel in releases:
-                url = rel.get("url")
-                meta = embed_cache.get(url or "")
-                # Only successful fetches enrich a release; negative-cache
-                # records (status "error") never surface here (LOG-5).
-                if not meta or meta.get("status") != "ok":
-                    continue
-                if meta.get("embed_url"):
-                    rel["embed_url"] = meta.get("embed_url")
-                if meta.get("release_id"):
-                    rel["release_id"] = meta.get("release_id")
-                if "is_track" in meta:
-                    rel["is_track"] = meta.get("is_track")
-                if meta.get("description"):
-                    rel["description"] = meta.get("description")
+        for rel in releases:
+            rel.setdefault("source", None)
+            url = rel.get("url")
+            meta = embed_cache.get(url or "")
+            # Only successful fetches enrich a release; negative-cache
+            # records (status "error") never surface here (LOG-5).
+            if not meta or meta.get("status") != "ok":
+                continue
+            if meta.get("release_id"):
+                rel["release_id"] = meta.get("release_id")
+            if "is_track" in meta:
+                # Bandcamp's own item_type is authoritative for is_track; the
+                # row's parse-time value is the path-heuristic fallback
+                # (LOG-10 precedence).
+                rel["is_track"] = meta.get("is_track")
+            # embed_url is DERIVED, never stored (LOG-20).
+            embed_url = build_embed_url(rel.get("release_id"), bool(rel.get("is_track")))
+            if embed_url:
+                rel["embed_url"] = embed_url
+            if meta.get("art_url"):
+                rel["art_url"] = meta.get("art_url")
+            rel["has_description"] = bool(meta.get("description"))
     except Exception:
         app.logger.exception("Failed to load releases")
         return jsonify({"error": "Couldn't load releases. See the server log for details."}), 500
@@ -263,7 +279,8 @@ def starred_state():
     starred = data.get("starred")
     if not url or not isinstance(starred, bool):
         return jsonify({"error": "Missing url or starred flag"}), 400
-    _set_url_flag(STARRED_PATH, url, starred)
+    # Canonical-URL keyed, like every URL store (LOG-9).
+    _set_url_flag(STARRED_PATH, canonical_release_url(url) or url, starred)
     return jsonify({"ok": True})
 
 
@@ -386,6 +403,9 @@ def embed_meta():
     release_url = request.args.get("url")
     if not release_url:
         return jsonify({"error": "Missing url parameter"}), 400
+    # Canonicalize before the cache lookup (LOG-9): every spelling of a
+    # release URL hits (and writes) the same embed-cache row.
+    release_url = canonical_release_url(release_url) or release_url
     try:
         record = get_embed_meta(release_url)
     except FetchBlockedError:
@@ -401,12 +421,14 @@ def embed_meta():
             return jsonify({"error": "That page doesn't look like a Bandcamp release."}), 502
         return jsonify({"error": "Couldn't reach the Bandcamp page for this release."}), 502
 
+    # embed_url is derived from the record, never stored in it (LOG-20).
     return jsonify(
         {
             "release_id": record.get("release_id"),
             "is_track": record.get("is_track"),
-            "embed_url": record.get("embed_url"),
+            "embed_url": build_embed_url(record.get("release_id"), bool(record.get("is_track"))),
             "description": record.get("description"),
+            "art_url": record.get("art_url"),
         }
     )
 
@@ -450,7 +472,9 @@ def reset_caches():
         return False
 
     if clear_cache:
-        for p in (RELEASE_CACHE_PATH, EMPTY_DATES_PATH, SCRAPE_STATUS_PATH, EMBED_CACHE_PATH):
+        # scrape_status.json is the single per-day ledger (LOG-11): there is
+        # no second empty-dates store to clear anymore.
+        for p in (RELEASE_CACHE_PATH, SCRAPE_STATUS_PATH, EMBED_CACHE_PATH):
             if _safe_unlink(p):
                 cleared.append(p.name)
     # Each flag clears ONLY its own store — clearing seen history must never
@@ -910,5 +934,6 @@ def provider_config():
 
 
 if __name__ == "__main__":
+    migrations.migrate()
     port = int(os.environ.get("PORT", 5050))
     app.run(host=BIND_HOST, port=port, threaded=True)
