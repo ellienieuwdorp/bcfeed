@@ -7,9 +7,9 @@ Covered:
   password is reused ONLY when the posted connection signature matches the
   saved config;
 * the /provider-config and /imap/discover routes drive the relocated helpers;
-* the single static-asset route serves /dashboard.css and /dashboard.js with
-  the same URLs/mimetypes as the former per-file routes (WP-18 prep) and keeps
-  the WP-08 generic-404 behavior;
+* the top-level static-asset route serves /dashboard.css with the right
+  mimetype and keeps the WP-08 generic-404 behavior (the ES modules under
+  /web/js/ are covered by tests/test_static_assets.py after the WP-18 split);
 * /releases still surfaces derived embed_url + has_description for ok embed records —
   both new-shape and legacy flat entries;
 * grep-proof source guards: no requests/BeautifulSoup/ImapClient usage left in
@@ -238,18 +238,16 @@ def test_provider_config_post_validates_via_relocated_helpers(server_mod, monkey
 # ---------------------------------------------------------------------------
 # Static assets: one route, same URLs, same behavior (WP-18 prep)
 # ---------------------------------------------------------------------------
-def test_static_route_serves_css_and_js(server_mod):
+def test_static_route_serves_css(server_mod):
+    # WP-18 split the single dashboard.js into ES modules under web/js/, so the
+    # top-level allowlist route now serves only dashboard.css. The module route
+    # is covered by tests/test_static_assets.py.
     client = server_mod.app.test_client()
 
     css = client.get("/dashboard.css")
     assert css.status_code == 200
     assert css.mimetype == "text/css"
     assert len(css.data) > 0
-
-    js = client.get("/dashboard.js")
-    assert js.status_code == 200
-    assert js.mimetype == "application/javascript"
-    assert len(js.data) > 0
 
 
 def test_static_route_missing_file_is_generic_404(server_mod, monkeypatch, tmp_path):

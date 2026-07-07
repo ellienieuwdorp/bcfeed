@@ -386,23 +386,39 @@ def dashboard_page():
     return send_file(DASHBOARD_PATH, mimetype="text/html")
 
 
-# One static-asset route for the frontend files (ARC-3, prep for WP-18's
-# web/ directory): allowlisted filenames only — a URL outside the allowlist
-# never reaches the filesystem. Same URLs and WP-08 behavior as the former
-# per-file routes.
+# Static-asset routes for the frontend files (ARC-3/ARC-4). Two allowlisted
+# shapes, both under the same WP-08 Host/CSRF/generic-404 guards and with no
+# CORS: the top-level `dashboard.css`, and the ES modules under `web/js/`
+# (WP-18 split the former single `dashboard.js` into native modules there).
 FRONTEND_DIR = DASHBOARD_PATH.parent
 FRONTEND_ASSET_MIMETYPES = {
     ".css": "text/css",
     ".js": "application/javascript",
 }
+# web/js is served as a directory, but path-traversal-safe: only real `.js`
+# files that resolve to a direct child of this dir are ever sent.
+WEB_JS_DIR = (FRONTEND_DIR / "web" / "js").resolve()
 
 
-@app.route("/<any('dashboard.css', 'dashboard.js'):filename>", methods=["GET"])
+@app.route("/<any('dashboard.css'):filename>", methods=["GET"])
 def frontend_asset(filename: str):
     path = FRONTEND_DIR / filename
     if not path.exists():
         return _missing_file_response(path)
     return send_file(path, mimetype=FRONTEND_ASSET_MIMETYPES[path.suffix])
+
+
+@app.route("/web/js/<path:filename>", methods=["GET"])
+def frontend_module(filename: str):
+    # Reject anything that is not a plain `.js` file, and — after resolving any
+    # `..` segments — anything that would escape web/js. A generic 404 hides
+    # which of those it was (SEC-2/SEC-9).
+    if not filename.endswith(".js"):
+        return _missing_file_response(WEB_JS_DIR / filename)
+    candidate = (WEB_JS_DIR / filename).resolve()
+    if candidate.parent != WEB_JS_DIR or not candidate.is_file():
+        return _missing_file_response(candidate)
+    return send_file(candidate, mimetype="application/javascript")
 
 
 # Docs routes and helpers.

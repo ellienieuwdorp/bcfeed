@@ -81,6 +81,37 @@ def test_smoke_do_not_break_list(page, app_server, seed_data):
         arg=url_a,
     )
 
+    # 3b. WP-18 render discipline: a single seen-toggle mutates the row in place
+    # and must NOT rebuild the tbody (node-identity) or run a table render — only
+    # the calendar re-renders. Capture the live node + reset the render counters,
+    # toggle, then assert the same node object is still connected.
+    page.evaluate(
+        """(url) => {
+            window.__smokeRowRef = document.querySelector(
+                `#release-rows tr.data-row[data-key="${url}"]`);
+            window.__bcfeedRenderCounts.table = 0;
+            window.__bcfeedRenderCounts.calendar = 0;
+        }""",
+        arg=url_a,
+    )
+    _row(page, url_a).focus()
+    page.keyboard.press("u")
+    page.wait_for_timeout(50)
+    identity = page.evaluate(
+        """(url) => {
+            const cur = document.querySelector(
+                `#release-rows tr.data-row[data-key="${url}"]`);
+            return {
+                identical: cur === window.__smokeRowRef,
+                connected: !!window.__smokeRowRef && window.__smokeRowRef.isConnected,
+                tableRenders: window.__bcfeedRenderCounts.table,
+            };
+        }""",
+        arg=url_a,
+    )
+    assert identity["identical"] and identity["connected"], identity
+    assert identity["tableRenders"] == 0, f"a single toggle rebuilt the tbody: {identity}"
+
     # 4. Keyboard 's' stars the focused row.
     _row(page, url_a).focus()
     page.keyboard.press("s")
@@ -134,3 +165,28 @@ def test_smoke_do_not_break_list(page, app_server, seed_data):
     )
     # No mutating request anywhere in the run was header-less.
     assert all(h == "1" for (_m, _u, h) in header_log), header_log
+
+    # 8. WP-18 render/ownership discipline: mark-all-seen mutates every visible
+    # row's state, persists the whole set with ONE batch POST, and coalesces to
+    # at most two renders (one table + one calendar) — never one POST/render per
+    # row (PERF-1/JS-11/ARCH-6).
+    page.evaluate(
+        """() => {
+            window.__bcfeedRenderCounts.table = 0;
+            window.__bcfeedRenderCounts.calendar = 0;
+        }"""
+    )
+    before_batch = len(
+        [u for (m, u, _h) in header_log if "/viewed-state/batch" in u and m == "POST"]
+    )
+    page.evaluate("() => document.getElementById('mark-seen').click()")
+    page.wait_for_timeout(150)
+    counts = page.evaluate("() => ({ ...window.__bcfeedRenderCounts })")
+    assert counts["table"] <= 1, f"mark-all-seen ran more than one table render: {counts}"
+    assert counts["calendar"] <= 1, f"mark-all-seen ran more than one calendar render: {counts}"
+    after_batch = len(
+        [u for (m, u, _h) in header_log if "/viewed-state/batch" in u and m == "POST"]
+    )
+    assert after_batch - before_batch == 1, (
+        f"mark-all-seen must issue exactly one batch POST, saw {after_batch - before_batch}"
+    )
