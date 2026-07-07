@@ -78,6 +78,9 @@ export function renderCalendar(type) {
     const isDisabled = cellDate > lastSelectable;
     if (isOtherMonth) cell.classList.add("other-month");
     if (isDisabled) cell.classList.add("disabled");
+    // Focusable landing spot so the global :focus-visible ring has a target on
+    // day cells (UIR-13/UIR-27); full grid key semantics belong to WP-21.
+    if (!isDisabled && !isOtherMonth) cell.tabIndex = 0;
     if (cal.startKey === key || cal.endKey === key) cell.classList.add("selected");
     if (
       startSelectedDate &&

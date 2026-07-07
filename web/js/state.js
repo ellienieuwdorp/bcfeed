@@ -117,7 +117,7 @@ export function markCachedBadge(row, release) {
   if (!row || !state.showCachedBadges) return;
   const titleCell = row.querySelector("[data-title-cell]");
   if (titleCell && release.embed_url && !titleCell.querySelector(".cached-badge")) {
-    titleCell.insertAdjacentHTML("beforeend", ' <span class="cached-badge">cached</span>');
+    titleCell.insertAdjacentHTML("beforeend", ' <span class="cached-badge">Saved</span>');
   }
 }
 

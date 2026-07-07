@@ -7,18 +7,103 @@
     <link rel="stylesheet" href="dashboard.css" />
   </head>
   <body>
+    <!-- Icon sprite (UIR-20): one inline-SVG set, 24x24 viewBox, currentColor
+         stroke, referenced via <use>. Replaces the emoji gear, the text help
+         button, the text chevron carats, the close glyphs, and the info SVG. -->
+    <svg
+      width="0"
+      height="0"
+      class="icon-sprite hidden"
+      aria-hidden="true"
+      focusable="false"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <symbol id="icon-gear" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path
+          d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
+        ></path>
+      </symbol>
+      <symbol id="icon-help-circle" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10"></circle>
+        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+      </symbol>
+      <symbol id="icon-x" viewBox="0 0 24 24">
+        <line x1="18" y1="6" x2="6" y2="18"></line>
+        <line x1="6" y1="6" x2="18" y2="18"></line>
+      </symbol>
+      <symbol id="icon-chevron-down" viewBox="0 0 24 24">
+        <polyline points="6 9 12 15 18 9"></polyline>
+      </symbol>
+      <symbol id="icon-chevron-left" viewBox="0 0 24 24">
+        <polyline points="15 18 9 12 15 6"></polyline>
+      </symbol>
+      <symbol id="icon-chevron-right" viewBox="0 0 24 24">
+        <polyline points="9 18 15 12 9 6"></polyline>
+      </symbol>
+      <symbol id="icon-star" viewBox="0 0 24 24">
+        <polygon
+          points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"
+        ></polygon>
+      </symbol>
+      <symbol id="icon-check-circle" viewBox="0 0 24 24">
+        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+      </symbol>
+      <symbol id="icon-alert-circle" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10"></circle>
+        <line x1="12" y1="8" x2="12" y2="12"></line>
+        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+      </symbol>
+      <symbol id="icon-alert-triangle" viewBox="0 0 24 24">
+        <path
+          d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
+        ></path>
+        <line x1="12" y1="9" x2="12" y2="13"></line>
+        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+      </symbol>
+      <symbol id="icon-arrow-up" viewBox="0 0 24 24">
+        <line x1="12" y1="19" x2="12" y2="5"></line>
+        <polyline points="5 12 12 5 19 12"></polyline>
+      </symbol>
+      <symbol id="icon-external-link" viewBox="0 0 24 24">
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+        <polyline points="15 3 21 3 21 9"></polyline>
+        <line x1="10" y1="14" x2="21" y2="3"></line>
+      </symbol>
+      <symbol id="icon-loader" viewBox="0 0 24 24">
+        <line x1="12" y1="2" x2="12" y2="6"></line>
+        <line x1="12" y1="18" x2="12" y2="22"></line>
+        <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
+        <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
+        <line x1="2" y1="12" x2="6" y2="12"></line>
+        <line x1="18" y1="12" x2="22" y2="12"></line>
+        <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
+        <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
+      </symbol>
+      <symbol id="icon-eye" viewBox="0 0 24 24">
+        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+        <circle cx="12" cy="12" r="3"></circle>
+      </symbol>
+      <symbol id="icon-funnel" viewBox="0 0 24 24">
+        <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+      </symbol>
+    </svg>
     <div class="layout">
       <aside>
         <label class="settings-row filter-toggle-row">
           <input type="checkbox" id="filter-by-date" checked />
-          <span class="filter-by-date-label">FILTER BY DATE</span>
+          <span class="filter-by-date-label">Filter by date</span>
         </label>
         <details class="panel" id="scrape-panel" open>
           <summary class="panel-header" title="Click to expand/collapse">
             <div class="panel-title">
               <span id="header-range-label" class="detail-meta count-label"></span>
             </div>
-            <span class="panel-carat">▾</span>
+            <svg class="panel-carat icon" aria-hidden="true">
+              <use href="#icon-chevron-down"></use>
+            </svg>
           </summary>
           <div class="panel-body" id="scrape-panel-body">
             <div class="date-range-panel">
@@ -30,23 +115,27 @@
                     </button>
                     <div class="calendar-nav">
                       <button type="button" data-cal-nav="range-prev" aria-label="Previous month">
-                        ‹
+                        <svg class="icon" aria-hidden="true">
+                          <use href="#icon-chevron-left"></use>
+                        </svg>
                       </button>
                       <span class="calendar-month" id="calendar-range-month"></span>
                       <button type="button" data-cal-nav="range-next" aria-label="Next month">
-                        ›
+                        <svg class="icon" aria-hidden="true">
+                          <use href="#icon-chevron-right"></use>
+                        </svg>
                       </button>
                     </div>
                   </div>
                 </div>
                 <div class="calendar-grid" id="calendar-range"></div>
                 <div class="calendar-legend">
-                  <span class="calendar-hint">SHIFT-CLICK TO SELECT RANGE</span>
+                  <span class="calendar-hint">Shift-click to select a range</span>
                   <span class="legend-grid">
                     <span class="legend-swatch-populated"></span>
-                    <span>Populated</span>
+                    <span>Checked</span>
                     <span class="legend-swatch-unseen"></span>
-                    <span>Unseen</span>
+                    <span>Has new releases</span>
                   </span>
                   <button id="select-month-btn" class="button select-month-button">
                     Select entire month
@@ -55,7 +144,7 @@
               </div>
               <div class="calendar-card calendar-card-secondary">
                 <div class="action-group">
-                  <div class="selected-range-label">SELECTED DATE RANGE:</div>
+                  <div class="selected-range-label">Selected dates</div>
                   <button id="populate-range" class="button populate-button">
                     Populate release list
                   </button>
@@ -73,7 +162,7 @@
             </div>
           </div>
         </details>
-        <div class="filter-title">Filter by Label/Page</div>
+        <div class="filter-title">Filter by label / page</div>
         <div id="label-filters" class="filter-list"></div>
         <button id="back-to-top" class="button back-to-top" type="button">Back to top</button>
       </aside>
@@ -81,10 +170,10 @@
         <header>
           <div class="header-bar">
             <div class="title-block">
-              <h1>bcfeed v1.0</h1>
+              <h1>bcfeed</h1>
             </div>
             <div class="header-actions">
-              <span class="show-only-label">SHOW ONLY:</span>
+              <span class="show-only-label">Show only</span>
               <button id="hide-viewed-btn" class="button toggle-button" aria-pressed="false">
                 Unseen
               </button>
@@ -97,7 +186,7 @@
                 aria-label="Settings"
                 title="Settings"
               >
-                ⚙️
+                <svg class="icon" aria-hidden="true"><use href="#icon-gear"></use></svg>
               </button>
               <a
                 href="readme"
@@ -106,8 +195,9 @@
                 title="Help"
                 target="_blank"
                 rel="noopener"
-                >?</a
               >
+                <svg class="icon" aria-hidden="true"><use href="#icon-help-circle"></use></svg>
+              </a>
             </div>
           </div>
         </header>
@@ -119,16 +209,30 @@
               <tr>
                 <th class="col-marker"></th>
                 <th class="col-star"></th>
-                <th data-sort="page_name" class="col-page">
-                  Label/Page <span class="sort-indicator"></span>
+                <th data-sort="page_name" class="col-page" tabindex="0">
+                  <span class="th-inner"
+                    >Label / page<svg class="sort-indicator" aria-hidden="true">
+                      <use href="#icon-chevron-down"></use></svg
+                  ></span>
                 </th>
-                <th data-sort="artist" class="col-artist">
-                  Artist <span class="sort-indicator"></span>
+                <th data-sort="artist" class="col-artist" tabindex="0">
+                  <span class="th-inner"
+                    >Artist<svg class="sort-indicator" aria-hidden="true">
+                      <use href="#icon-chevron-down"></use></svg
+                  ></span>
                 </th>
-                <th data-sort="title" class="col-title">
-                  Title <span class="sort-indicator"></span>
+                <th data-sort="title" class="col-title" tabindex="0">
+                  <span class="th-inner"
+                    >Title<svg class="sort-indicator" aria-hidden="true">
+                      <use href="#icon-chevron-down"></use></svg
+                  ></span>
                 </th>
-                <th data-sort="date" class="col-date">Date <span class="sort-indicator"></span></th>
+                <th data-sort="date" class="col-date" tabindex="0">
+                  <span class="th-inner"
+                    >Date<svg class="sort-indicator" aria-hidden="true">
+                      <use href="#icon-chevron-down"></use></svg
+                  ></span>
+                </th>
               </tr>
             </thead>
             <tbody id="release-rows"></tbody>
@@ -146,7 +250,9 @@
               class="button status-toggle"
               aria-expanded="true"
             >
-              <span class="status-carat">▾</span>
+              <svg class="status-carat icon" aria-hidden="true">
+                <use href="#icon-chevron-down"></use>
+              </svg>
             </button>
           </div>
           <div id="populate-log" class="scrollbox full-width"></div>
@@ -161,13 +267,15 @@
         <!-- Header -->
         <div class="settings-header">
           <h2>Settings</h2>
-          <button id="settings-close" class="button" aria-label="Close settings">✕</button>
+          <button id="settings-close" class="button" aria-label="Close settings">
+            <svg class="icon" aria-hidden="true"><use href="#icon-x"></use></svg>
+          </button>
         </div>
 
         <div class="settings-content-scroll">
           <!-- Appearance Section -->
           <div class="settings-section">
-            <div class="settings-section-title">Appearance</div>
+            <div class="micro-label">Appearance</div>
             <div class="settings-group">
               <div class="settings-row">
                 <input type="checkbox" id="theme-toggle" class="filter-checkbox show" />
@@ -187,7 +295,7 @@
 
           <!-- Provider Section -->
           <div class="settings-section">
-            <div class="settings-section-title">Email Configuration</div>
+            <div class="micro-label">Email configuration</div>
             <div class="settings-group">
               <div>
                 <label for="provider-select" class="form-label">Provider</label>
@@ -204,7 +312,9 @@
                   <code>client_secret.json</code> file.
                 </div>
                 <div class="settings-actions">
-                  <button id="load-creds-btn" class="button primary">Load credentials file</button>
+                  <button id="load-creds-btn" class="button button-primary">
+                    Load credentials file
+                  </button>
                   <button id="clear-creds-btn" class="button">Clear credentials</button>
                   <!-- Hidden file input needs to stay -->
                   <input
@@ -219,8 +329,8 @@
                     href="https://myaccount.google.com/permissions"
                     target="_blank"
                     rel="noopener noreferrer"
-                    class="button danger revoke-link"
-                    >Revoke Gmail Authorization</a
+                    class="button button-danger revoke-link"
+                    >Revoke Gmail authorization</a
                   >
                   <div class="help-text">
                     Revokes access on Google's side. To remove local tokens, use "Clear
@@ -284,20 +394,8 @@
                           title="Some providers require an app-specific password for IMAP access. Check your provider's documentation."
                           class="imap-help-icon"
                         >
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            width="13"
-                            height="13"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                          >
-                            <circle cx="12" cy="12" r="10"></circle>
-                            <line x1="12" y1="16" x2="12" y2="12"></line>
-                            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                          <svg class="icon" aria-hidden="true">
+                            <use href="#icon-help-circle"></use>
                           </svg>
                         </span>
                       </div>
@@ -312,7 +410,7 @@
                 </div>
 
                 <div class="settings-actions imap-action-row imap-discover-row">
-                  <button id="imap-discover" class="button primary">
+                  <button id="imap-discover" class="button button-primary">
                     Connect &amp; load folders
                   </button>
                   <div id="imap-discover-status" class="help-text imap-status-text"></div>
@@ -320,7 +418,7 @@
 
                 <div class="imap-folder-section">
                   <div>
-                    <label for="imap-folder-select" class="form-label">Folder To Scan</label>
+                    <label for="imap-folder-select" class="form-label">Folder to scan</label>
                     <select id="imap-folder-select" class="form-select" disabled>
                       <option value="">Connect to load folders</option>
                     </select>
@@ -334,7 +432,7 @@
                   </button>
 
                   <div id="imap-folder-manual-wrap" style="display: none">
-                    <label for="imap-folder-manual" class="form-label">Manual Folder Name</label>
+                    <label for="imap-folder-manual" class="form-label">Manual folder name</label>
                     <input
                       type="text"
                       id="imap-folder-manual"
@@ -350,8 +448,8 @@
 
                 <!-- Footer -->
                 <div class="imap-save-footer imap-action-row">
-                  <button id="imap-save" class="button primary imap-save-button" disabled>
-                    Save IMAP Configuration
+                  <button id="imap-save" class="button button-primary imap-save-button" disabled>
+                    Save IMAP configuration
                   </button>
                   <div id="imap-save-status" class="help-text imap-status-text"></div>
                 </div>
@@ -361,7 +459,7 @@
 
           <!-- Data Section -->
           <div class="settings-section">
-            <div class="settings-section-title">Data & Storage</div>
+            <div class="micro-label">Data & storage</div>
             <div class="settings-group">
               <div class="settings-note">
                 Clear all cached release data, images, and viewing history. Your settings and
@@ -371,6 +469,12 @@
                 <button id="settings-reset" class="button">Clear cache & reset database</button>
               </div>
             </div>
+          </div>
+
+          <!-- About Section -->
+          <div class="settings-section">
+            <div class="micro-label">About</div>
+            <div class="settings-note">bcfeed v1.0</div>
           </div>
         </div>
       </div>
@@ -393,8 +497,10 @@
     <div id="missing-token-backdrop" class="settings-backdrop">
       <div class="missing-token-modal">
         <div class="modal-title-row">
-          <h2>Credentials Needed</h2>
-          <button id="missing-token-close" class="button" aria-label="Close">✕</button>
+          <h2>Credentials needed</h2>
+          <button id="missing-token-close" class="button" aria-label="Close">
+            <svg class="icon" aria-hidden="true"><use href="#icon-x"></use></svg>
+          </button>
         </div>
         <p>
           Email credentials not configured. Configure your provider settings in the Settings panel
@@ -408,8 +514,10 @@
     <div id="load-creds-backdrop" class="settings-backdrop">
       <div class="missing-token-modal">
         <div class="modal-title-row">
-          <h2>Load Credentials</h2>
-          <button id="load-creds-close" class="button" aria-label="Close">✕</button>
+          <h2>Load credentials</h2>
+          <button id="load-creds-close" class="button" aria-label="Close">
+            <svg class="icon" aria-hidden="true"><use href="#icon-x"></use></svg>
+          </button>
         </div>
         <p>You will be prompted to load your "client_secret_XXXXXXX.json" credentials file.</p>
         <p>The sensitive contents are stored securely in your system keychain.</p>

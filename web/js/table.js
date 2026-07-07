@@ -113,16 +113,18 @@ function sortData(items) {
 }
 
 function refreshSortIndicators() {
+  // The sort indicator is an inline-SVG chevron (UIR-11): invisible until
+  // sorted, accent when active, rotated for ascending. We toggle classes only —
+  // no text-glyph carets as icons.
   document.querySelectorAll("th[data-sort]").forEach((th) => {
-    const indicator = th.querySelector(".sort-indicator");
     const key = th.dataset.sort;
-    if (state.sortKey === key) {
-      indicator.textContent = state.direction === "asc" ? "▲" : "▼";
-      th.classList.add("sorted-active");
-    } else {
-      indicator.textContent = "";
-      th.classList.remove("sorted-active");
-    }
+    const active = state.sortKey === key;
+    th.classList.toggle("sorted-active", active);
+    th.classList.toggle("sort-asc", active && state.direction === "asc");
+    th.setAttribute(
+      "aria-sort",
+      active ? (state.direction === "asc" ? "ascending" : "descending") : "none",
+    );
   });
 }
 
@@ -219,14 +221,12 @@ export function renderTable() {
           <td data-marker-cell class="col-marker"><span class="row-dot"></span></td>
           <td class="col-star">
             <button type="button" class="star-btn" data-star-btn aria-label="Star this release" aria-pressed="false" title="Star this release">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"></path>
-              </svg>
+              <svg aria-hidden="true"><use href="#icon-star"></use></svg>
             </button>
           </td>
           <td><a class="link" href="${esc(safePageUrl)}" target="_blank" rel="noopener">${esc(release.page_name || "Unknown")}</a></td>
           <td><a class="link" href="${esc(safePageUrl)}" target="_blank" rel="noopener">${esc(release.artist || "—")}</a></td>
-          <td data-title-cell><a class="link" href="${esc(safeReleaseUrl)}" target="_blank" rel="noopener" data-title-link>${esc(release.title || "—")}</a>${state.showCachedBadges && release.embed_url ? ' <span class="cached-badge">cached</span>' : ""}</td>
+          <td data-title-cell><a class="link" href="${esc(safeReleaseUrl)}" target="_blank" rel="noopener" data-title-link>${esc(release.title || "—")}</a>${state.showCachedBadges && release.embed_url ? ' <span class="cached-badge">Saved</span>' : ""}</td>
           <td>${esc(formatDate(release.date))}</td>
         `;
     const existingRead = state.viewed.has(key);

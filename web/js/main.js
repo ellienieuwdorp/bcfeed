@@ -36,22 +36,30 @@ function applyDevSettingsVisibility() {
 }
 
 function initTheme() {
-  const applyTheme = (theme) => {
+  // JS-13/UX-18/ARCH-11: seed from prefers-color-scheme when the user has made
+  // no explicit choice, persist ONLY an explicit choice, and never force-default
+  // to dark. A stored "light"/"dark" always wins over the OS preference.
+  const applyTheme = (theme, { persist = false } = {}) => {
     const isLight = theme === "light";
     document.body.classList.toggle("theme-light", isLight);
     if (themeToggleBtn) themeToggleBtn.checked = !isLight;
-    localStorage.setItem(THEME_KEY, isLight ? "light" : "dark");
+    if (persist) localStorage.setItem(THEME_KEY, isLight ? "light" : "dark");
   };
   const savedThemeValue = localStorage.getItem(THEME_KEY);
-  let savedTheme = savedThemeValue || config.defaultTheme || "light";
-  if (!config.showDevSettings && !savedThemeValue) {
-    savedTheme = "dark";
+  let theme;
+  if (savedThemeValue === "light" || savedThemeValue === "dark") {
+    theme = savedThemeValue; // explicit stored choice wins
+  } else {
+    const prefersLight =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-color-scheme: light)").matches;
+    theme = prefersLight ? "light" : "dark"; // seed from OS; do not persist
   }
-  applyTheme(savedTheme);
+  applyTheme(theme);
   if (themeToggleBtn) {
-    themeToggleBtn.checked = savedTheme !== "light";
+    themeToggleBtn.checked = theme !== "light";
     themeToggleBtn.addEventListener("change", () => {
-      applyTheme(themeToggleBtn.checked ? "dark" : "light");
+      applyTheme(themeToggleBtn.checked ? "dark" : "light", { persist: true });
     });
   }
 }
