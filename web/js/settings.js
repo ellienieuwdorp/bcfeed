@@ -4,14 +4,16 @@
 // setStatus (the single status-text API) instead of a private copy.
 
 import { csrfFetch as fetch } from "./config.js";
-import { endpoints } from "./api.js";
+import { endpoints, fetchReleases } from "./api.js";
 import { setStatus } from "./status.js";
 import { state, releases } from "./state.js";
 import { renderTable } from "./table.js";
-import { toggleSettings } from "./modals.js";
-import { showBanner } from "./feedback.js";
+import { fetchScrapeStatus } from "./calendar.js";
+import { toggleSettings, registerDialog, openDialog, closeDialog } from "./modals.js";
+import { showBanner, showToast } from "./feedback.js";
 
 const providerSelect = document.getElementById("provider-select");
+const connectionStatusEl = document.getElementById("settings-connection-status");
 const gmailConfigPanel = document.getElementById("gmail-config-panel");
 const imapConfigPanel = document.getElementById("imap-config-panel");
 const imapHost = document.getElementById("imap-host");
@@ -29,6 +31,11 @@ const imapDiscoverStatus = document.getElementById("imap-discover-status");
 const imapSave = document.getElementById("imap-save");
 const imapSaveStatus = document.getElementById("imap-save-status");
 const settingsReset = document.getElementById("settings-reset");
+const deleteDataBackdrop = document.getElementById("delete-data-backdrop");
+const deleteDataClose = document.getElementById("delete-data-close");
+const deleteDataCancel = document.getElementById("delete-data-cancel");
+const deleteDataConfirm = document.getElementById("delete-data-confirm");
+const deleteDataIncludeStars = document.getElementById("delete-data-include-stars");
 const IMAP_DISCOVER_LABEL = "Connect & load folders";
 const IMAP_RELOAD_LABEL = "Reload folders";
 const imapState = {
@@ -250,11 +257,40 @@ async function maybeAutoDiscoverImapFolders() {
   await discoverImapFolders({ showStatus: false, autoSelectSaved: true });
 }
 
-function updateImapConfigVisibility() {
+// Exported so the onboarding controller (which re-hosts the IMAP panel in the
+// first-run checklist) can restore the Settings modal's per-provider display.
+export function updateImapConfigVisibility() {
   if (!providerSelect) return;
   const isImap = providerSelect.value === "imap";
   if (imapConfigPanel) imapConfigPanel.style.display = isImap ? "block" : "none";
   if (gmailConfigPanel) gmailConfigPanel.style.display = isImap ? "none" : "block";
+}
+
+// The last provider config fetched from the server, used to render the
+// connection-status line at the top of the Email connection section (UXP-5).
+let lastProviderConfig = null;
+
+// Per-provider connection state shown first in Settings, with no action needed.
+// Gmail uses /provider-config's has_gmail_credentials; IMAP uses has_password
+// plus a complete host/username/folder.
+function updateConnectionStatus() {
+  if (!connectionStatusEl) return;
+  const cfg = lastProviderConfig || {};
+  const provider = providerSelect ? providerSelect.value : cfg.provider || "gmail";
+  const imap = cfg.imap_config || {};
+  let connected = false;
+  let text = "Not connected yet.";
+  if (provider === "imap") {
+    connected = !!(imap.host && imap.username && imap.has_password && imap.folder);
+    text = connected ? "Connected to your mail server." : "Not connected yet.";
+  } else {
+    connected = !!cfg.has_gmail_credentials;
+    text = connected ? "Gmail is connected." : "Not connected yet.";
+  }
+  connectionStatusEl.classList.toggle("is-connected", connected);
+  connectionStatusEl.classList.toggle("is-disconnected", !connected);
+  const textEl = connectionStatusEl.querySelector(".connection-text");
+  if (textEl) textEl.textContent = text;
 }
 
 async function loadProviderConfig() {
@@ -263,6 +299,7 @@ async function loadProviderConfig() {
     const resp = await fetch(`${endpoints.apiRoot}/provider-config`);
     if (!resp.ok) return;
     const providerConfig = await resp.json();
+    lastProviderConfig = providerConfig;
     if (providerSelect) {
       providerSelect.value = providerConfig.provider || "gmail";
     }
@@ -286,6 +323,7 @@ async function loadProviderConfig() {
     }
     resetImapFolderState();
     updateImapConfigVisibility();
+    updateConnectionStatus();
     await maybeAutoDiscoverImapFolders();
     setStatus(imapSaveStatus, "");
     syncImapUi();
@@ -341,7 +379,19 @@ async function saveProviderConfig() {
         if (imapPass) {
           imapPass.value = "";
         }
-        setStatus(imapSaveStatus, "IMAP configuration saved.", "success");
+        setStatus(imapSaveStatus, "Mail settings saved.", "success");
+        // Reflect the newly-saved connection in the status line + let the
+        // onboarding checklist advance without a page reload.
+        lastProviderConfig = {
+          ...(lastProviderConfig || {}),
+          provider: "imap",
+          imap_config: {
+            ...payload.imap_config,
+            has_password: true,
+          },
+        };
+        updateConnectionStatus();
+        document.dispatchEvent(new CustomEvent("bcfeed:connection-changed"));
       }
     } else {
       setStatus(imapSaveStatus, `Error: ${data.error || "Failed to save configuration."}`, "error");
@@ -353,10 +403,30 @@ async function saveProviderConfig() {
   }
 }
 
-async function performReset() {
-  const clearCache = true;
-  const clearViewed = true;
-  const clearStarred = true;
+// --- Delete-downloaded-data dialog (WP-23 · UXP-7) --------------------------
+// A confirmation that enumerates exactly what will be deleted, with a
+// stars/seen-history checkbox that defaults OFF, and a post-action toast. No
+// destructive action runs on a single click. The flag split is honoured
+// server-side (CQ-03), so a default delete keeps stars + seen history.
+function updateDeleteConfirmLabel() {
+  if (!deleteDataConfirm) return;
+  const includeStars = !!(deleteDataIncludeStars && deleteDataIncludeStars.checked);
+  deleteDataConfirm.textContent = includeStars ? "Delete everything" : "Delete downloaded data";
+}
+
+function openDeleteDataDialog() {
+  // Default OFF on every open — the destructive extra is never sticky.
+  if (deleteDataIncludeStars) deleteDataIncludeStars.checked = false;
+  updateDeleteConfirmLabel();
+  openDialog(deleteDataBackdrop);
+}
+
+function closeDeleteDataDialog() {
+  closeDialog(deleteDataBackdrop);
+}
+
+async function performDeleteData() {
+  const includeStars = !!(deleteDataIncludeStars && deleteDataIncludeStars.checked);
   let hadError = false;
   if (endpoints.apiRoot) {
     try {
@@ -364,21 +434,33 @@ async function performReset() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          clear_cache: clearCache,
-          clear_viewed: clearViewed,
-          clear_starred: clearStarred,
+          clear_cache: true,
+          clear_viewed: includeStars,
+          clear_starred: includeStars,
         }),
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     } catch (err) {
-      console.warn("Failed to reset via API", err);
+      console.warn("Failed to delete data via API", err);
       hadError = true;
     }
   } else {
-    hadError = true; // cannot clear disk cache without API
+    hadError = true; // cannot clear disk data without the local server
   }
-  state.viewed = new Set();
-  state.starred = new Set();
+  if (hadError) {
+    closeDeleteDataDialog();
+    showBanner(
+      "reset-error",
+      "Couldn't reach bcfeed. Make sure it's still running, then try again.",
+      { kind: "error" },
+    );
+    return;
+  }
+  // Only clear stars/seen locally when the user asked for it.
+  if (includeStars) {
+    state.viewed = new Set();
+    state.starred = new Set();
+  }
   releases.forEach((r) => {
     delete r.embed_url;
     delete r.release_id;
@@ -387,19 +469,28 @@ async function performReset() {
     delete r.has_description;
     delete r.art_url;
   });
-  renderTable();
+  closeDeleteDataDialog();
   toggleSettings(false);
-  if (hadError && clearCache) {
-    showBanner(
-      "reset-error",
-      "Couldn't reach bcfeed. Make sure it's still running, then try again.",
-      {
-        kind: "error",
-      },
-    );
-  } else {
-    window.location.reload();
+  // In-place refresh (no reload, so the toast is actually seen). The data is
+  // gone, so the checklist re-evaluates via the connection-changed broadcast.
+  try {
+    await fetchReleases();
+  } catch (err) {
+    console.warn("Failed to refresh releases after delete", err);
   }
+  renderTable();
+  try {
+    await fetchScrapeStatus();
+  } catch (err) {
+    console.warn("Failed to refresh coverage after delete", err);
+  }
+  showToast(
+    includeStars
+      ? "Deleted downloaded releases, players, stars, and history."
+      : "Deleted downloaded releases and players. Your stars and history were kept.",
+    { kind: "success" },
+  );
+  document.dispatchEvent(new CustomEvent("bcfeed:connection-changed"));
 }
 
 // Wire the provider controller + reset button; called once by main.js.
@@ -407,6 +498,7 @@ export function initSettings() {
   if (providerSelect) {
     providerSelect.addEventListener("change", () => {
       updateImapConfigVisibility();
+      updateConnectionStatus();
       if (providerSelect.value === "gmail") {
         saveProviderType();
       } else {
@@ -447,7 +539,22 @@ export function initSettings() {
     imapFolderManual.addEventListener("input", syncImapUi);
   }
   if (imapSave) imapSave.addEventListener("click", saveProviderConfig);
-  if (settingsReset) settingsReset.addEventListener("click", performReset);
+
+  // Delete-downloaded-data confirmation dialog (UXP-7). Registered with the
+  // shared focus-trap manager so Escape/backdrop close it and restore focus.
+  if (deleteDataBackdrop) {
+    registerDialog(deleteDataBackdrop, closeDeleteDataDialog);
+    deleteDataBackdrop.addEventListener("click", (e) => {
+      if (e.target === deleteDataBackdrop) closeDeleteDataDialog();
+    });
+  }
+  if (settingsReset) settingsReset.addEventListener("click", openDeleteDataDialog);
+  if (deleteDataClose) deleteDataClose.addEventListener("click", closeDeleteDataDialog);
+  if (deleteDataCancel) deleteDataCancel.addEventListener("click", closeDeleteDataDialog);
+  if (deleteDataIncludeStars) {
+    deleteDataIncludeStars.addEventListener("change", updateDeleteConfirmLabel);
+  }
+  if (deleteDataConfirm) deleteDataConfirm.addEventListener("click", () => performDeleteData());
 
   loadProviderConfig();
 }

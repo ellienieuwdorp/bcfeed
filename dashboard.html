@@ -207,6 +207,101 @@
         <!-- Banner region (WP-22 · UXP-19/UXP-20): persistent, actionable
              failure/connection banners render here, above the table. -->
         <div id="banner-region" class="banner-region"></div>
+        <!-- First-run checklist (WP-23 · UXP-3/4/6): when no releases have been
+             fetched yet, the main content shows a sequenced, provider-branching
+             setup checklist instead of the empty table. onboarding.js detects
+             the current step and shows/hides this section. -->
+        <section id="onboarding" class="onboarding" aria-label="Set up bcfeed" hidden>
+          <div class="onboarding-inner">
+            <h2 class="onboarding-title">Welcome to bcfeed</h2>
+            <p class="onboarding-subtitle">
+              bcfeed turns your Bandcamp "new release" emails into a browsable list. Three quick
+              steps and you're set.
+            </p>
+            <ol class="onboarding-steps">
+              <li class="onboarding-step" id="onboarding-step-1" data-step="1">
+                <div class="step-head">
+                  <span class="step-marker" aria-hidden="true">1</span>
+                  <h3 class="step-title">Choose how bcfeed reads your email</h3>
+                </div>
+                <div class="step-body">
+                  <div class="provider-choice">
+                    <button type="button" class="provider-card" data-provider="imap">
+                      <span class="provider-card-title">Connect an IMAP mailbox</span>
+                      <span class="provider-card-time">About 5 minutes</span>
+                      <span class="provider-card-desc">
+                        Works with most email providers. Many providers (including Gmail) need an
+                        app-specific password for this — your normal password won't work. We'll show
+                        you where to create one.
+                      </span>
+                    </button>
+                    <button type="button" class="provider-card" data-provider="gmail">
+                      <span class="provider-card-title">Sign in with Google</span>
+                      <span class="provider-card-time">About 20 minutes, one time</span>
+                      <span class="provider-card-desc">
+                        Google requires a one-time setup so that only you can read your own email.
+                        You'll finish with a file named client_secret_….json.
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              </li>
+              <li class="onboarding-step" id="onboarding-step-2" data-step="2">
+                <div class="step-head">
+                  <span class="step-marker" aria-hidden="true">2</span>
+                  <h3 class="step-title">Connect it to bcfeed</h3>
+                </div>
+                <div class="step-body">
+                  <p class="onboarding-provider-switch">
+                    <span id="onboarding-provider-name">Setting up your connection.</span>
+                    <button type="button" class="link-button" id="onboarding-change-provider">
+                      Choose a different way
+                    </button>
+                  </p>
+                  <div id="onboarding-gmail-connect" class="onboarding-connect" hidden>
+                    <p>
+                      When you connect, a Google sign-in tab opens in your browser. Google will warn
+                      that the app is unverified — that's expected, because this is your own private
+                      app.
+                    </p>
+                    <p class="onboarding-guide-hint">
+                      <a href="setup-gmail" target="_blank" rel="noopener"
+                        >Open the step-by-step guide</a
+                      >
+                      to get your Google access file (client_secret_….json).
+                    </p>
+                    <button type="button" class="button button-primary" id="onboarding-gmail-btn">
+                      Connect Gmail…
+                    </button>
+                  </div>
+                  <div id="onboarding-imap-connect" class="onboarding-connect" hidden>
+                    <p class="onboarding-guide-hint">
+                      <a href="setup-imap" target="_blank" rel="noopener"
+                        >Open the step-by-step guide</a
+                      >
+                      if you need help finding your mail server details.
+                    </p>
+                    <div id="onboarding-imap-slot" class="onboarding-imap-slot"></div>
+                  </div>
+                </div>
+              </li>
+              <li class="onboarding-step" id="onboarding-step-3" data-step="3">
+                <div class="step-head">
+                  <span class="step-marker" aria-hidden="true">3</span>
+                  <h3 class="step-title">Get your first releases</h3>
+                </div>
+                <div class="step-body">
+                  <p>
+                    Pick dates on the calendar and press Get releases, or start with the last month.
+                  </p>
+                  <button type="button" class="button button-primary" id="onboarding-check-30">
+                    Check the last 30 days
+                  </button>
+                </div>
+              </li>
+            </ol>
+          </div>
+        </section>
         <div class="table-wrapper">
           <table aria-label="Bandcamp releases">
             <thead>
@@ -326,27 +421,29 @@
 
           <!-- Provider Section -->
           <div class="settings-section">
-            <div class="micro-label">Email configuration</div>
+            <div class="micro-label">Email connection</div>
             <div class="settings-group">
+              <div id="settings-connection-status" class="connection-status" aria-live="polite">
+                <span class="connection-dot" aria-hidden="true"></span>
+                <span class="connection-text">Checking your connection…</span>
+              </div>
               <div>
-                <label for="provider-select" class="form-label">Provider</label>
+                <label for="provider-select" class="form-label">How bcfeed reads your email</label>
                 <select id="provider-select" class="form-select">
-                  <option value="gmail">Gmail API (OAuth)</option>
-                  <option value="imap">IMAP</option>
+                  <option value="gmail">Google sign-in (Gmail only)</option>
+                  <option value="imap">Mail server (IMAP — most providers)</option>
                 </select>
               </div>
 
               <!-- Gmail Config Panel -->
               <div id="gmail-config-panel" class="provider-panel" style="display: none">
                 <div class="settings-note gmail-intro">
-                  Connect using the official Google API. Requires a
-                  <code>client_secret.json</code> file.
+                  Sign in with Google. You'll need a one-time Google access file (about 20 minutes
+                  to set up the first time).
                 </div>
                 <div class="settings-actions">
-                  <button id="load-creds-btn" class="button button-primary">
-                    Load credentials file
-                  </button>
-                  <button id="clear-creds-btn" class="button">Clear credentials</button>
+                  <button id="load-creds-btn" class="button button-primary">Connect Gmail…</button>
+                  <button id="clear-creds-btn" class="button">Disconnect Gmail</button>
                   <!-- Hidden file input needs to stay -->
                   <input
                     type="file"
@@ -361,11 +458,11 @@
                     target="_blank"
                     rel="noopener noreferrer"
                     class="button button-danger revoke-link"
-                    >Revoke Gmail authorization</a
+                    >Remove bcfeed's access in your Google account</a
                   >
                   <div class="help-text">
-                    Revokes access on Google's side. To remove local tokens, use "Clear
-                    credentials".
+                    This removes access on Google's side. To disconnect inside bcfeed, use
+                    Disconnect Gmail.
                   </div>
                 </div>
               </div>
@@ -421,14 +518,6 @@
                     <div>
                       <div class="imap-pass-label-row">
                         <label for="imap-pass" class="form-label imap-pass-label">Password</label>
-                        <span
-                          title="Some providers require an app-specific password for IMAP access. Check your provider's documentation."
-                          class="imap-help-icon"
-                        >
-                          <svg class="icon" aria-hidden="true">
-                            <use href="#icon-help-circle"></use>
-                          </svg>
-                        </span>
                       </div>
                       <input
                         type="password"
@@ -436,6 +525,11 @@
                         class="form-input"
                         placeholder="Password"
                       />
+                      <div class="help-text">
+                        Many providers (including Gmail) need an app-specific password for IMAP —
+                        your normal password won't work. Create one in your email account's security
+                        settings.
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -488,16 +582,17 @@
             </div>
           </div>
 
-          <!-- Data Section -->
-          <div class="settings-section">
-            <div class="micro-label">Data & storage</div>
+          <!-- Data Section (danger zone) -->
+          <div class="settings-section settings-section-danger">
+            <div class="micro-label micro-label-danger">Danger zone</div>
             <div class="settings-group">
               <div class="settings-note">
-                Clear all cached release data, images, and viewing history. Your settings and
-                credentials will be preserved.
+                Delete the releases and players bcfeed has downloaded. Your connection stays set up.
               </div>
               <div class="settings-actions">
-                <button id="settings-reset" class="button">Clear cache & reset database</button>
+                <button id="settings-reset" class="button button-danger">
+                  Delete downloaded data…
+                </button>
               </div>
             </div>
           </div>
@@ -516,52 +611,92 @@
         range.
       </div>
     </div>
-    <div id="missing-token-backdrop" class="settings-backdrop">
-      <div
-        class="missing-token-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="missing-token-title"
-      >
-        <div class="modal-title-row">
-          <h2 id="missing-token-title">Credentials needed</h2>
-          <button id="missing-token-close" class="button" aria-label="Close">
-            <svg class="icon" aria-hidden="true"><use href="#icon-x"></use></svg>
-          </button>
-        </div>
-        <p>
-          Email credentials not configured. Configure your provider settings in the Settings panel
-          to continue.
-        </p>
-        <div class="modal-actions-end">
-          <button id="missing-token-continue" class="button">Continue</button>
-        </div>
-      </div>
-    </div>
+    <!-- Connect-Gmail modal (WP-23 · UXP-4): announces the OAuth consent hop
+         before the file picker, then shows a supervised waiting state with a
+         Cancel, and a retry affordance on timeout/failure. The ✕/backdrop close
+         the modal and NEVER open the file picker (WP-07/JS-9 preserved). -->
     <div id="load-creds-backdrop" class="settings-backdrop">
       <div
-        class="missing-token-modal"
+        class="missing-token-modal load-creds-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="load-creds-title"
+        data-state="intro"
       >
         <div class="modal-title-row">
-          <h2 id="load-creds-title">Load credentials</h2>
+          <h2 id="load-creds-title">Connect Gmail</h2>
           <button id="load-creds-close" class="button" aria-label="Close">
             <svg class="icon" aria-hidden="true"><use href="#icon-x"></use></svg>
           </button>
         </div>
-        <p>You will be prompted to load your "client_secret_XXXXXXX.json" credentials file.</p>
-        <p>The sensitive contents are stored securely in your system keychain.</p>
-        <p>This must be downloaded from Google Cloud.</p>
-        <p>For instructions on how to get this file, please refer to the setup instructions:</p>
+        <div class="load-creds-view" data-view="intro">
+          <p>
+            Choose the Google access file you downloaded — it's named
+            <code>client_secret_….json</code>.
+          </p>
+          <p>
+            After you choose it, a Google sign-in tab opens in your browser. Google will warn that
+            the app is unverified — that's expected, because this is your own private app. Click
+            "Advanced", then "Go to bcfeed (unsafe)" to continue.
+          </p>
+          <p>bcfeed keeps this file in your Mac's Keychain — it never sits in a plain file.</p>
+          <p>
+            <a class="link" href="setup-gmail" target="_blank" rel="noopener"
+              >How do I get this file?</a
+            >
+          </p>
+          <div class="modal-actions-end">
+            <button id="load-creds-continue" class="button button-primary">
+              Choose access file…
+            </button>
+          </div>
+        </div>
+        <div class="load-creds-view" data-view="waiting" hidden>
+          <div class="load-creds-waiting">
+            <svg class="icon spinning" aria-hidden="true"><use href="#icon-loader"></use></svg>
+            <p>Waiting for you to finish signing in with Google… Check for a new browser tab.</p>
+          </div>
+          <div class="modal-actions-end">
+            <button id="load-creds-cancel" class="button">Cancel</button>
+          </div>
+        </div>
+        <div class="load-creds-view" data-view="retry" hidden>
+          <p id="load-creds-retry-msg">Sign-in wasn't completed.</p>
+          <div class="modal-actions-end">
+            <button id="load-creds-retry" class="button button-primary">Try again</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- Delete-downloaded-data confirmation (WP-23 · UXP-7): enumerates exactly
+         what will be deleted; the stars/seen checkbox defaults OFF; a toast
+         reports what was removed. Reuses the WP-21 focus-trap dialog manager. -->
+    <div id="delete-data-backdrop" class="settings-backdrop">
+      <div
+        class="missing-token-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-data-title"
+      >
+        <div class="modal-title-row">
+          <h2 id="delete-data-title">Delete downloaded data</h2>
+          <button id="delete-data-close" class="button" aria-label="Close">
+            <svg class="icon" aria-hidden="true"><use href="#icon-x"></use></svg>
+          </button>
+        </div>
         <p>
-          <a class="link" href="setup-gmail" target="_blank" rel="noopener"
-            >Show setup instructions</a
-          >
+          This deletes all downloaded releases and their players. bcfeed will forget which dates it
+          has already checked, and re-download them next time.
         </p>
-        <div class="modal-actions-end">
-          <button id="load-creds-continue" class="button">Continue</button>
+        <label class="settings-row delete-data-option">
+          <input type="checkbox" id="delete-data-include-stars" />
+          <span>Also delete my stars and seen/unseen history.</span>
+        </label>
+        <div class="modal-actions-between">
+          <button id="delete-data-cancel" class="button">Cancel</button>
+          <button id="delete-data-confirm" class="button button-danger">
+            Delete downloaded data
+          </button>
         </div>
       </div>
     </div>

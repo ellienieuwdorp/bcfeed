@@ -13,9 +13,6 @@ import { showToast, showBanner, dismissBanner } from "./feedback.js";
 
 const GMAIL_BANNER = "gmail-connect";
 const maxResultsBackdrop = document.getElementById("max-results-backdrop");
-const missingTokenBackdrop = document.getElementById("missing-token-backdrop");
-const missingTokenClose = document.getElementById("missing-token-close");
-const missingTokenContinue = document.getElementById("missing-token-continue");
 const settingsBackdrop = document.getElementById("settings-backdrop");
 const settingsBtn = document.getElementById("settings-btn");
 const settingsClose = document.getElementById("settings-close");
@@ -23,8 +20,14 @@ const clearCredsBtn = document.getElementById("clear-creds-btn");
 const loadCredsBtn = document.getElementById("load-creds-btn");
 const loadCredsFile = document.getElementById("load-creds-file");
 const loadCredsBackdrop = document.getElementById("load-creds-backdrop");
+const loadCredsModal = loadCredsBackdrop
+  ? loadCredsBackdrop.querySelector(".load-creds-modal")
+  : null;
 const loadCredsClose = document.getElementById("load-creds-close");
 const loadCredsContinue = document.getElementById("load-creds-continue");
+const loadCredsCancel = document.getElementById("load-creds-cancel");
+const loadCredsRetry = document.getElementById("load-creds-retry");
+const loadCredsRetryMsg = document.getElementById("load-creds-retry-msg");
 
 // --- Modal manager (role=dialog + focus trap + Escape + focus restore) ------
 //
@@ -123,6 +126,20 @@ document.addEventListener("keydown", (evt) => {
   }
 });
 
+// --- Generic dialog helpers (WP-23) -----------------------------------------
+// Expose the shared focus-trap manager so other modules (settings.js's
+// delete-data dialog) register + open + close through the same trap without
+// duplicating it.
+export function registerDialog(backdrop, closeFn) {
+  registerModal(backdrop, closeFn);
+}
+export function openDialog(backdrop) {
+  if (backdrop) openModal(backdrop);
+}
+export function closeDialog(backdrop) {
+  if (backdrop) closeModal(backdrop);
+}
+
 // --- Max-results modal ------------------------------------------------------
 export function showMaxResultsModal() {
   openModal(maxResultsBackdrop);
@@ -138,20 +155,11 @@ export function toggleSettings(open) {
   else closeModal(settingsBackdrop);
 }
 
-// --- Missing-credentials modal ---------------------------------------------
-function showMissingTokenModal() {
-  openModal(missingTokenBackdrop);
-}
-function hideMissingTokenModal() {
-  if (missingTokenBackdrop) closeModal(missingTokenBackdrop);
-  toggleSettings(true);
-}
-
-// Reset the Load-credentials button whenever the settings panel is toggled.
+// Reset the Connect-Gmail button whenever the settings panel is toggled.
 function resetLoadCredsBtn() {
   if (loadCredsBtn) {
     loadCredsBtn.disabled = false;
-    loadCredsBtn.textContent = "Load credentials";
+    loadCredsBtn.textContent = "Connect Gmail…";
   }
 }
 
@@ -174,7 +182,9 @@ function wireClearCreds() {
         });
       } else {
         dismissBanner(GMAIL_BANNER);
+        config.missingToken = true;
         showToast("Gmail disconnected.", { kind: "success" });
+        document.dispatchEvent(new CustomEvent("bcfeed:connection-changed"));
       }
     } catch (err) {
       console.warn("Failed to clear credentials", err);
@@ -183,112 +193,136 @@ function wireClearCreds() {
       });
     } finally {
       clearCredsBtn.disabled = false;
-      clearCredsBtn.textContent = original || "Clear credentials";
+      clearCredsBtn.textContent = original || "Disconnect Gmail";
     }
   });
+}
+
+// The Connect-Gmail modal has three views (intro → waiting → retry). Switching
+// views toggles the [data-view] blocks and records the state on the panel.
+function setLoadCredsView(view) {
+  if (!loadCredsModal) return;
+  loadCredsModal.setAttribute("data-state", view);
+  loadCredsModal.querySelectorAll(".load-creds-view").forEach((el) => {
+    el.hidden = el.getAttribute("data-view") !== view;
+  });
+  // Keep focus inside the dialog on the newly-shown view's primary control.
+  const isOpen = loadCredsBackdrop && loadCredsBackdrop.style.display !== "none";
+  const primary = loadCredsModal.querySelector(`.load-creds-view[data-view="${view}"] button`);
+  if (isOpen && primary) primary.focus();
+}
+
+// Generation token: bumping it makes any in-flight poll loop exit (Cancel / ✕ /
+// backdrop / a fresh attempt) so the UI is recoverable in one click (UXP-4).
+let connectPollGeneration = 0;
+
+// Open the supervised Connect-Gmail modal, reset to the intro (pre-announce)
+// view. Exported so the onboarding checklist's Gmail step reuses it.
+export function openGmailConnect() {
+  if (!loadCredsBackdrop) return;
+  connectPollGeneration += 1; // cancel any stale poll
+  setLoadCredsView("intro");
+  openModal(loadCredsBackdrop);
+}
+
+function hideLoadCredsModal() {
+  connectPollGeneration += 1; // stop polling on any close
+  if (loadCredsBackdrop) closeModal(loadCredsBackdrop);
+  setLoadCredsView("intro"); // reset for next time
+}
+
+function openLoadCredsFile() {
+  if (loadCredsFile) {
+    loadCredsFile.value = "";
+    loadCredsFile.click();
+  }
+}
+
+// WP-13: /load-credentials returns immediately while the Google consent flow
+// runs on a server background thread; poll /connect-status and drive the
+// waiting → done / retry transitions (UXP-4).
+async function pollConnectStatus() {
+  if (!endpoints.connectStatus) return;
+  const generation = connectPollGeneration;
+  const deadline = Date.now() + 200000; // a little past the server's ~3 min limit
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    if (generation !== connectPollGeneration) return; // cancelled / superseded
+    let data = null;
+    try {
+      const resp = await fetch(endpoints.connectStatus, { cache: "no-store" });
+      if (resp.ok) data = await resp.json();
+    } catch (e) {
+      // Server briefly unreachable — keep polling until the deadline.
+    }
+    if (!data) continue;
+    if (data.message) logAppendLine(data.message);
+    if (data.status === "done") {
+      if (generation !== connectPollGeneration) return;
+      config.missingToken = false;
+      dismissBanner(GMAIL_BANNER);
+      showToast("Gmail connected.", { kind: "success" });
+      hideLoadCredsModal();
+      document.dispatchEvent(new CustomEvent("bcfeed:connection-changed"));
+      return;
+    }
+    if (data.status === "failed" || data.status === "idle") {
+      showConnectRetry("Sign-in wasn't completed. Try again.");
+      return;
+    }
+  }
+  showConnectRetry("Sign-in wasn't completed. Try again.");
+}
+
+function showConnectRetry(message) {
+  if (loadCredsRetryMsg) loadCredsRetryMsg.textContent = message;
+  setLoadCredsView("retry");
+}
+
+async function doLoadCreds() {
+  const file = loadCredsFile && loadCredsFile.files && loadCredsFile.files[0];
+  if (!file || !endpoints.loadCreds) return;
+  try {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    const resp = await fetch(endpoints.loadCreds, { method: "POST", body: form });
+    const data = await resp.json().catch(() => ({}));
+    const joinedLogs = Array.isArray(data.logs) ? data.logs.join("\n") : "";
+    if (joinedLogs) logAppendLine(joinedLogs);
+    if (!resp.ok) {
+      showConnectRetry("Couldn't read that access file. Choose the client_secret_….json file.");
+      return;
+    }
+    dismissBanner(GMAIL_BANNER);
+    if (data.status === "waiting") {
+      connectPollGeneration += 1;
+      setLoadCredsView("waiting");
+      pollConnectStatus();
+    }
+  } catch (err) {
+    console.warn("Failed to load credentials", err);
+    showConnectRetry("Couldn't connect Gmail. Check the access file and try again.");
+  }
 }
 
 function wireLoadCreds() {
   if (!loadCredsBtn || !loadCredsFile || !endpoints.loadCreds) return;
 
-  // WP-13: /load-credentials returns immediately while the Google consent flow
-  // runs on a server background thread. Poll the status surface and reflect
-  // waiting/done/failed in the existing status area (the full modal UX is
-  // WP-23).
-  const pollConnectStatus = async () => {
-    if (!endpoints.connectStatus) return;
-    const deadline = Date.now() + 200000; // a little past the server's ~3 min limit
-    while (Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      let data = null;
-      try {
-        const resp = await fetch(endpoints.connectStatus, { cache: "no-store" });
-        if (resp.ok) data = await resp.json();
-      } catch (e) {
-        // Server briefly unreachable — keep polling until the deadline.
-      }
-      if (!data) continue;
-      if (data.message) logAppendLine(data.message);
-      if (data.status === "done") {
-        config.missingToken = false;
-        dismissBanner(GMAIL_BANNER);
-        showToast("Gmail connected.", { kind: "success" });
-        return;
-      }
-      if (data.status === "failed" || data.status === "idle") {
-        showBanner(GMAIL_BANNER, "The Gmail sign-in didn't finish. Try connecting again.", {
-          kind: "error",
-        });
-        return;
-      }
-    }
-    showBanner(GMAIL_BANNER, "The Gmail sign-in didn't finish. Try connecting again.", {
-      kind: "error",
-    });
-  };
-
-  const doLoadCreds = async () => {
-    const file = loadCredsFile.files && loadCredsFile.files[0];
-    if (!file) return;
-    loadCredsBtn.disabled = true;
-    const original = loadCredsBtn.textContent;
-    loadCredsBtn.textContent = "Loading…";
-    try {
-      const form = new FormData();
-      form.append("file", file, file.name);
-      const resp = await fetch(endpoints.loadCreds, { method: "POST", body: form });
-      const data = await resp.json().catch(() => ({}));
-      const joinedLogs = Array.isArray(data.logs) ? data.logs.join("\n") : "";
-      if (joinedLogs) logAppendLine(joinedLogs);
-      if (!resp.ok) {
-        showBanner(GMAIL_BANNER, "Couldn't connect Gmail. Check the access file and try again.", {
-          kind: "error",
-        });
-      } else {
-        dismissBanner(GMAIL_BANNER);
-        showToast("Waiting for you to finish signing in with Google…", { kind: "info" });
-        if (data.status === "waiting") pollConnectStatus();
-      }
-    } catch (err) {
-      console.warn("Failed to load credentials", err);
-      showBanner(GMAIL_BANNER, "Couldn't connect Gmail. Check the access file and try again.", {
-        kind: "error",
-      });
-    } finally {
-      loadCredsBtn.disabled = false;
-      loadCredsBtn.textContent = original || "Load credentials";
-    }
-  };
-
-  const openLoadCredsFile = () => {
-    if (loadCredsFile) {
-      loadCredsFile.value = "";
-      loadCredsFile.click();
-    }
-  };
-  const showLoadCredsModal = () => {
-    if (loadCredsBackdrop) {
-      openModal(loadCredsBackdrop);
-    } else {
-      openLoadCredsFile();
-    }
-  };
-  const hideLoadCredsModal = () => {
-    if (loadCredsBackdrop) closeModal(loadCredsBackdrop);
-  };
-  const confirmLoadCredsModal = () => {
-    hideLoadCredsModal();
-    openLoadCredsFile();
-  };
   registerModal(loadCredsBackdrop, hideLoadCredsModal);
+  // ✕ and backdrop CLOSE the modal — they must NEVER open the file picker
+  // (WP-07/JS-9 fix preserved). Only "Choose access file…" opens the picker.
   if (loadCredsClose) loadCredsClose.addEventListener("click", hideLoadCredsModal);
-  if (loadCredsContinue) loadCredsContinue.addEventListener("click", confirmLoadCredsModal);
   if (loadCredsBackdrop) {
     loadCredsBackdrop.addEventListener("click", (e) => {
       if (e.target === loadCredsBackdrop) hideLoadCredsModal();
     });
   }
-  loadCredsBtn.addEventListener("click", showLoadCredsModal);
+  if (loadCredsContinue) loadCredsContinue.addEventListener("click", openLoadCredsFile);
+  if (loadCredsCancel) loadCredsCancel.addEventListener("click", hideLoadCredsModal);
+  if (loadCredsRetry) loadCredsRetry.addEventListener("click", () => setLoadCredsView("intro"));
+
+  // The Settings "Connect Gmail…" button opens the same supervised modal.
+  loadCredsBtn.addEventListener("click", openGmailConnect);
   loadCredsFile.addEventListener("change", () => {
     if (loadCredsFile.files && loadCredsFile.files[0]) {
       doLoadCreds();
@@ -304,7 +338,6 @@ export function initModals() {
     resetLoadCredsBtn();
     toggleSettings(false);
   });
-  registerModal(missingTokenBackdrop, hideMissingTokenModal);
 
   if (maxResultsBackdrop) {
     maxResultsBackdrop.addEventListener("click", (e) => {
@@ -330,16 +363,10 @@ export function initModals() {
       if (e.target === settingsBackdrop) toggleSettings(false);
     });
   }
-  if (missingTokenClose) missingTokenClose.addEventListener("click", hideMissingTokenModal);
-  if (missingTokenContinue) missingTokenContinue.addEventListener("click", hideMissingTokenModal);
-  if (missingTokenBackdrop) {
-    missingTokenBackdrop.addEventListener("click", (e) => {
-      if (e.target === missingTokenBackdrop) hideMissingTokenModal();
-    });
-  }
-
   wireClearCreds();
   wireLoadCreds();
 
-  if (config.missingToken) showMissingTokenModal();
+  // The old "Credentials Needed" modal + its auto-open-Settings behaviour are
+  // gone: first-run now shows the onboarding checklist in the main content
+  // (onboarding.js), driven off the same has_credentials signal.
 }

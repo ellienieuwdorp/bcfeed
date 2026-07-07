@@ -32,6 +32,7 @@ import {
 import { initModals } from "./modals.js";
 import { initPopulate, updatePopulateButton } from "./populate.js";
 import { initSettings } from "./settings.js";
+import { initOnboarding, refreshOnboarding } from "./onboarding.js";
 import { showToast, showBanner, dismissBanner, setControlsOffline } from "./feedback.js";
 
 const THEME_KEY = "bc_dashboard_theme";
@@ -164,6 +165,10 @@ async function initData() {
   refreshToggleButtons();
   fetchScrapeStatus();
   hideLoading();
+  // WP-23: with release data known, decide whether the first-run checklist
+  // shows (and at which detected step). Only runs on a successful load, so a
+  // load error keeps its own error state instead of the checklist.
+  refreshOnboarding();
 }
 
 async function main() {
@@ -183,6 +188,7 @@ async function main() {
   initSettings();
   initPopulate();
   initCalendar();
+  initOnboarding();
   initChrome();
 
   // Server-down / recovery (WP-22 · UXP-20): a non-blocking banner instead of a
