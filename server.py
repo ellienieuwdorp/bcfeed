@@ -5,25 +5,22 @@ bcfeed local server that powers the dashboard, cache population, and embed metad
 from __future__ import annotations
 
 import datetime
-import html
 import os
 import socket
 import threading
 from pathlib import Path
 from queue import SimpleQueue
 
-import requests
 from flask import Flask, Response, jsonify, render_template, request, send_file, stream_with_context
 from flask.testing import FlaskClient
-from markdown_it import MarkdownIt
 from werkzeug.datastructures import Headers
 from werkzeug.serving import WSGIRequestHandler, make_server
 
+import docs_render
 import json_store
-from bandcamp import build_embed_url, extract_bandcamp_description, extract_bc_meta
+from bandcamp import embed_cache_snapshot, get_embed_meta
 from credential_store import (
     CredentialStoreError,
-    get_imap_password,
     has_imap_password,
     save_gmail_client_config_json,
 )
@@ -35,10 +32,7 @@ from gmail_client import (
     gmail_credentials_configured,
     gmail_token_available,
 )
-from imap_client import ImapClient, ImapConfig, ImapFolder
 from paths import (
-    DASHBOARD_CSS_PATH,
-    DASHBOARD_JS_PATH,
     DASHBOARD_PATH,
     EMBED_CACHE_PATH,
     EMPTY_DATES_PATH,
@@ -58,7 +52,20 @@ from pipeline import (
     encode_event_payload,
     populate_release_cache,
 )
-from provider_factory import get_current_provider_type, load_provider_config, save_provider_config
+from provider_factory import (
+    build_imap_config as _build_imap_config,
+)
+from provider_factory import (
+    discover_imap_folders as _discover_imap_folders,
+)
+from provider_factory import (
+    get_current_provider_type,
+    load_provider_config,
+    save_provider_config,
+)
+from provider_factory import (
+    open_imap_client as _open_imap_client,
+)
 from session_store import get_full_release_cache, scrape_status_for_range
 from util import parse_date
 from util import today as _today
@@ -67,30 +74,10 @@ app = Flask(__name__)
 
 POPULATE_LOCK = threading.Lock()
 GMAIL_MAX_RESULTS_HARD = 2000
-DOC_LINK_MAP = {
-    "SETUP.md": "setup",
-    "IMAP_SETUP.md": "setup-imap",
-    "GMAIL_SETUP.md": "setup-gmail",
-    "README.md": "readme",
-}
-IMAP_DISCOVERY_SEARCH_CRITERIA = ["FROM", '"noreply@bandcamp.com"', "SUBJECT", '"New release from"']
 
-
-def _build_doc_markdown_renderer() -> MarkdownIt:
-    md = MarkdownIt("gfm-like", {"html": True})
-
-    def render_link_open(self, tokens, idx, options, env):
-        href = tokens[idx].attrGet("href") or ""
-        tokens[idx].attrSet("href", DOC_LINK_MAP.get(href, href))
-        tokens[idx].attrSet("target", "_blank")
-        tokens[idx].attrSet("rel", "noopener")
-        return self.renderToken(tokens, idx, options, env)
-
-    md.add_render_rule("link_open", render_link_open)
-    return md
-
-
-DOC_MARKDOWN_RENDERER = _build_doc_markdown_renderer()
+# Re-exported for the doc-render golden tests; configuration lives in
+# docs_render (CQ-31).
+DOC_MARKDOWN_RENDERER = docs_render.DOC_MARKDOWN_RENDERER
 
 
 # --- Localhost lockdown (WP-08: SEC-4/SEC-11, ARC-5b/5c) -------------------
@@ -128,7 +115,7 @@ def _localhost_lockdown():
 
 
 class _SameOriginTestClient(FlaskClient):
-    """Default test client modelling the app's own browser requests.
+    """Default test client modelling the app's own browser traffic.
 
     The dashboard's fetch wrapper attaches the anti-CSRF header to every
     non-GET request, so route tests exercising handler behavior get the same
@@ -179,43 +166,6 @@ def _load_viewed() -> set[str]:
 
 def _load_starred() -> set[str]:
     return _load_url_set(STARRED_PATH)
-
-
-def _load_embed_cache() -> dict:
-    data = json_store.read_json(EMBED_CACHE_PATH, {})
-    return data if isinstance(data, dict) else {}
-
-
-def _save_embed_metadata(
-    url: str, *, release_id=None, is_track=None, embed_url=None, description=None
-) -> None:
-    if not url:
-        return
-
-    def mutator(cache):
-        if not isinstance(cache, dict):
-            cache = {}
-        existing = cache.get(url)
-        if not isinstance(existing, dict):
-            existing = {}
-        merged = {
-            "release_id": existing.get("release_id"),
-            "is_track": existing.get("is_track"),
-            "embed_url": existing.get("embed_url"),
-            "description": existing.get("description"),
-        }
-        if release_id is not None:
-            merged["release_id"] = release_id
-        if is_track is not None:
-            merged["is_track"] = is_track
-        if embed_url is not None:
-            merged["embed_url"] = embed_url
-        if description is not None:
-            merged["description"] = description
-        cache[url] = merged
-        return cache
-
-    json_store.update_json(EMBED_CACHE_PATH, mutator, {}, indent=2)
 
 
 @app.route("/health", methods=["GET"])
@@ -279,12 +229,14 @@ def viewed_state():
 def releases_endpoint():
     try:
         releases = get_full_release_cache()
-        embed_cache = _load_embed_cache()
-        if isinstance(embed_cache, dict) and embed_cache:
+        embed_cache = embed_cache_snapshot()
+        if embed_cache:
             for rel in releases:
                 url = rel.get("url")
                 meta = embed_cache.get(url or "")
-                if not meta:
+                # Only successful fetches enrich a release; negative-cache
+                # records (status "error") never surface here (LOG-5).
+                if not meta or meta.get("status") != "ok":
                     continue
                 if meta.get("embed_url"):
                     rel["embed_url"] = meta.get("embed_url")
@@ -337,105 +289,6 @@ def _has_credentials_for_provider() -> bool:
     return False
 
 
-def _coerce_imap_port(value) -> int:
-    try:
-        port = int(value)
-    except (TypeError, ValueError):
-        return 993
-    return port if port > 0 else 993
-
-
-def _coerce_imap_use_ssl(value) -> bool:
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return True
-    return str(value).strip().lower() not in {"false", "0", "no", "off", "none"}
-
-
-def _imap_connection_signature(imap: dict | None) -> tuple[str, int, str, bool]:
-    imap = imap or {}
-    return (
-        str(imap.get("host", "")).strip(),
-        _coerce_imap_port(imap.get("port", 993)),
-        str(imap.get("username", "")).strip(),
-        _coerce_imap_use_ssl(imap.get("use_ssl", True)),
-    )
-
-
-def _build_imap_config(imap: dict | None, existing: dict | None = None) -> dict:
-    existing = existing or {}
-    imap = imap or {}
-    config = {
-        "host": str(imap.get("host", existing.get("host", "")) or "").strip(),
-        "port": _coerce_imap_port(imap.get("port", existing.get("port", 993))),
-        "username": str(imap.get("username", existing.get("username", "")) or "").strip(),
-        "password": str(imap.get("password", "") or ""),
-        "folder": str(imap.get("folder", existing.get("folder", "")) or "").strip(),
-        "use_ssl": _coerce_imap_use_ssl(imap.get("use_ssl", existing.get("use_ssl", True))),
-    }
-    if not config["password"] and _imap_connection_signature(config) == _imap_connection_signature(
-        existing
-    ):
-        try:
-            config["password"] = get_imap_password()
-        except CredentialStoreError:
-            config["password"] = str(existing.get("password", "") or "")
-    return config
-
-
-def _open_imap_client(imap: dict, *, select_folder: bool = False) -> ImapClient:
-    client = ImapClient(ImapConfig(**imap))
-    client.authenticate(select_folder=select_folder)
-    return client
-
-
-def _imap_folder_rank(folder: ImapFolder) -> tuple[int, str]:
-    flags = {flag.lower() for flag in folder.flags}
-    name = folder.name.lower()
-    score = 100
-
-    if "\\all" in flags:
-        score = 0
-    elif "\\inbox" in flags or name == "inbox":
-        score = 10
-    elif "\\archive" in flags or "archive" in name or "all mail" in name:
-        score = 20
-    elif "\\junk" in flags or "\\trash" in flags or "\\sent" in flags or "\\drafts" in flags:
-        score += 500
-    elif any(keyword in name for keyword in ("spam", "junk", "trash", "deleted", "sent", "draft")):
-        score += 500
-
-    if not folder.selectable:
-        score += 1000
-
-    return score, name
-
-
-def _discover_imap_folders(client: ImapClient) -> tuple[list[str], str | None]:
-    folders = client.list_folders()
-    ordered = sorted(folders, key=_imap_folder_rank)
-    selectable = [folder.name for folder in ordered if folder.selectable]
-    recommended_folder: str | None = None
-
-    probe_candidates = [
-        folder for folder in ordered if folder.selectable and _imap_folder_rank(folder)[0] < 500
-    ][:5]
-    for folder in probe_candidates:
-        try:
-            client.select_folder(folder.name)
-            if client.uid_search(IMAP_DISCOVERY_SEARCH_CRITERIA):
-                recommended_folder = folder.name
-                break
-        except (AuthenticationError, ProviderError):
-            continue
-
-    if recommended_folder is None:
-        recommended_folder = next(iter(selectable), None)
-
-    return selectable, recommended_folder
-
-
 @app.route("/config.json", methods=["GET"])
 def config_json():
     embed_proxy_url = request.host_url.rstrip("/") + "/embed-meta"
@@ -466,29 +319,30 @@ def dashboard_page():
     return send_file(DASHBOARD_PATH, mimetype="text/html")
 
 
-@app.route("/dashboard.css", methods=["GET"])
-def dashboard_css():
-    if not DASHBOARD_CSS_PATH.exists():
-        return _missing_file_response(DASHBOARD_CSS_PATH)
-    return send_file(DASHBOARD_CSS_PATH, mimetype="text/css")
+# One static-asset route for the frontend files (ARC-3, prep for WP-18's
+# web/ directory): allowlisted filenames only — a URL outside the allowlist
+# never reaches the filesystem. Same URLs and WP-08 behavior as the former
+# per-file routes.
+FRONTEND_DIR = DASHBOARD_PATH.parent
+FRONTEND_ASSET_MIMETYPES = {
+    ".css": "text/css",
+    ".js": "application/javascript",
+}
 
 
-@app.route("/dashboard.js", methods=["GET"])
-def dashboard_js():
-    if not DASHBOARD_JS_PATH.exists():
-        return _missing_file_response(DASHBOARD_JS_PATH)
-    return send_file(DASHBOARD_JS_PATH, mimetype="application/javascript")
+@app.route("/<any('dashboard.css', 'dashboard.js'):filename>", methods=["GET"])
+def frontend_asset(filename: str):
+    path = FRONTEND_DIR / filename
+    if not path.exists():
+        return _missing_file_response(path)
+    return send_file(path, mimetype=FRONTEND_ASSET_MIMETYPES[path.suffix])
 
 
 # Docs routes and helpers.
 def _serve_markdown_doc(path: Path, title: str) -> Response:
-    if not path.exists():
+    body = docs_render.render_doc_body(path)
+    if body is None:
         return _missing_file_response(path)
-    markdown_text = path.read_text(encoding="utf-8")
-    try:
-        body = DOC_MARKDOWN_RENDERER.render(markdown_text)
-    except Exception:
-        body = f"<pre>{html.escape(markdown_text)}</pre>"
     return render_template("docs.html", title=title, body=body)
 
 
@@ -526,45 +380,29 @@ def readme_doc():
 
 @app.route("/embed-meta", methods=["GET"])
 def embed_meta():
+    # Thin wrapper: cache lookup, fetch, parse, and record-keeping all live in
+    # bandcamp.get_embed_meta (ARC-3); this route only translates the embed
+    # record into an HTTP response. Error bodies stay generic (SEC-9).
     release_url = request.args.get("url")
     if not release_url:
         return jsonify({"error": "Missing url parameter"}), 400
     try:
-        resp = requests.get(
-            release_url,
-            headers={"User-Agent": "bcfeed/1.0"},
-            timeout=10,
-        )
-        resp.raise_for_status()
+        record = get_embed_meta(release_url)
     except Exception:
-        app.logger.exception("Failed to fetch Bandcamp page for embed metadata")
+        app.logger.exception("Embed metadata lookup failed")
+        return jsonify({"error": "Couldn't load details for this release."}), 502
+
+    if record.get("status") != "ok":
+        if record.get("code") == "no_meta":
+            return jsonify({"error": "That page doesn't look like a Bandcamp release."}), 502
         return jsonify({"error": "Couldn't reach the Bandcamp page for this release."}), 502
-
-    html_text = resp.text
-    data = extract_bc_meta(html_text)
-    description = extract_bandcamp_description(html_text)
-    if not data:
-        return jsonify({"error": "That page doesn't look like a Bandcamp release."}), 404
-
-    item_id = data.get("item_id")
-    is_track = (data.get("item_type") == "track") or (data.get("item_type") == "t")
-    embed_url = build_embed_url(item_id, is_track)
-
-    # Persist embed metadata for future sessions.
-    _save_embed_metadata(
-        release_url,
-        release_id=item_id,
-        is_track=is_track,
-        embed_url=embed_url,
-        description=description,
-    )
 
     return jsonify(
         {
-            "release_id": item_id,
-            "is_track": is_track,
-            "embed_url": embed_url,
-            "description": description,
+            "release_id": record.get("release_id"),
+            "is_track": record.get("is_track"),
+            "embed_url": record.get("embed_url"),
+            "description": record.get("description"),
         }
     )
 

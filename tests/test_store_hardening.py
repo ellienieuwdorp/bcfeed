@@ -231,17 +231,33 @@ def test_store_formats_unchanged(server_mod, isolated_data_dir):
     client.post("/viewed-state", json={"url": "https://a.bc.com/album/x", "read": True})
     assert json.loads(paths.VIEWED_PATH.read_text(encoding="utf-8")) == ["https://a.bc.com/album/x"]
 
-    # Embed metadata merges partial updates per URL, dict-of-dicts on disk.
+    # Embed cache stays dict-of-dicts keyed by URL on disk; since WP-11 the
+    # record shape is the LOG-20 one (status/fetched_at + fields), written by
+    # bandcamp._store_embed_record through json_store. The full record-shape
+    # contract is covered in tests/test_embed_cache.py.
+    import bandcamp
+
     url = "https://a.bc.com/album/x"
-    server_mod._save_embed_metadata(url, release_id="123", is_track=False)
-    server_mod._save_embed_metadata(url, embed_url="https://bandcamp.com/EmbeddedPlayer/album=123")
-    cache = json.loads(paths.EMBED_CACHE_PATH.read_text(encoding="utf-8"))
-    assert cache == {
-        url: {
+    bandcamp._store_embed_record(
+        url,
+        {
+            "status": "ok",
             "release_id": "123",
             "is_track": False,
             "embed_url": "https://bandcamp.com/EmbeddedPlayer/album=123",
-            "description": None,
+            "description": "",
+            "fetched_at": 42,
+        },
+    )
+    cache = json.loads(paths.EMBED_CACHE_PATH.read_text(encoding="utf-8"))
+    assert cache == {
+        url: {
+            "status": "ok",
+            "release_id": "123",
+            "is_track": False,
+            "embed_url": "https://bandcamp.com/EmbeddedPlayer/album=123",
+            "description": "",
+            "fetched_at": 42,
         }
     }
 

@@ -122,6 +122,10 @@ def test_mutating_posts_without_header_are_403(raw_client):
 
 
 def test_headerless_imap_discover_opens_no_outbound_connection(server_mod, raw_client, monkeypatch):
+    # Since WP-11 the IMAP client is constructed in provider_factory
+    # (open_imap_client), not in server.py — spy there.
+    import provider_factory
+
     constructed = []
 
     class SpyImapClient:
@@ -131,7 +135,7 @@ def test_headerless_imap_discover_opens_no_outbound_connection(server_mod, raw_c
         def __getattr__(self, name):  # pragma: no cover - should never run
             raise AssertionError("IMAP client must never be used for a rejected request")
 
-    monkeypatch.setattr(server_mod, "ImapClient", SpyImapClient)
+    monkeypatch.setattr(provider_factory, "ImapClient", SpyImapClient)
     resp = raw_client.post(
         "/imap/discover",
         json={
