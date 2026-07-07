@@ -118,10 +118,10 @@ function refreshSortIndicators() {
     const key = th.dataset.sort;
     if (state.sortKey === key) {
       indicator.textContent = state.direction === "asc" ? "▲" : "▼";
-      th.style.color = "var(--text)";
+      th.classList.add("sorted-active");
     } else {
       indicator.textContent = "";
-      th.style.color = "var(--muted)";
+      th.classList.remove("sorted-active");
     }
   });
 }
@@ -216,8 +216,8 @@ export function renderTable() {
     const safePageUrl = safeHttpUrl(pageUrlFor(release)) || "#";
     const safeReleaseUrl = safeHttpUrl(release.url) || "#";
     tr.innerHTML = `
-          <td data-marker-cell style="width:24px;"><span class="row-dot"></span></td>
-          <td style="width:34px; text-align:center;">
+          <td data-marker-cell class="col-marker"><span class="row-dot"></span></td>
+          <td class="col-star">
             <button type="button" class="star-btn" data-star-btn aria-label="Star this release" aria-pressed="false" title="Star this release">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"></path>
@@ -293,8 +293,8 @@ function expandRow(evt, tr, release, key) {
       embedTarget.innerHTML = `<div class="detail-meta">No embed available. Is the app still running? <br><a class="link" href="${esc(safeHttpUrl(release.url) || "#")}" target="_blank" rel="noopener">Open on Bandcamp</a>.</div>`;
       return;
     }
-    const height = release.is_track ? 320 : 480;
-    embedTarget.innerHTML = `<iframe title="Bandcamp player" style="border:0; width:100%; height:${height}px;" src="${esc(safeEmbedUrl)}" seamless></iframe>`;
+    const frameClass = release.is_track ? "embed-frame is-track" : "embed-frame";
+    embedTarget.innerHTML = `<iframe title="Bandcamp player" class="${frameClass}" src="${esc(safeEmbedUrl)}" seamless></iframe>`;
     markCachedBadge(tr, release);
     if (descTarget) {
       descTarget.textContent = release.description || "No description available.";

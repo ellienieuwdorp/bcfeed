@@ -69,8 +69,8 @@ function forceCachedForNonDev() {
 }
 
 function initChrome() {
-  const scrapePanel = document.getElementById("scrape-wireframe");
-  const scrapePanelBody = document.getElementById("scrape-wireframe-body");
+  const scrapePanel = document.getElementById("scrape-panel");
+  const scrapePanelBody = document.getElementById("scrape-panel-body");
   if (scrapePanel && scrapePanelBody) {
     scrapePanelBody.hidden = !scrapePanel.open;
     scrapePanel.addEventListener("toggle", () => {

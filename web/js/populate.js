@@ -9,7 +9,7 @@ import { endpoints, fetchReleases, checkServerAlive } from "./api.js";
 import { esc } from "./state.js";
 import { renderTable, restoreExpandedRow } from "./table.js";
 import { applyCalendarFiltersFromSelection, fetchScrapeStatus } from "./calendar.js";
-import { logClear, logSetColor, logAppendLine, logAppendHtml } from "./status.js";
+import { logClear, logHighlight, logAppendLine, logAppendHtml } from "./status.js";
 import { showMaxResultsModal } from "./modals.js";
 
 const populateBtn = document.getElementById("populate-range");
@@ -74,7 +74,7 @@ function populateRangeFromCalendars() {
   if (startVal && !endVal) endVal = startVal;
   if (endVal && !startVal) startVal = endVal;
   if (!endpoints.apiRoot || !startVal || !endVal) return;
-  logSetColor("");
+  logHighlight(false);
 
   if (!window.EventSource) {
     alert("Populate requires EventSource support. Please use a modern browser.");
@@ -159,7 +159,7 @@ function preloadEmbedsForRange() {
     preloadBtn.disabled = true;
     preloadBtn.textContent = "Loading players…";
   }
-  logSetColor("");
+  logHighlight(false);
   logClear();
 
   const url = `${endpoints.apiRoot}/preload-range-stream?start=${encodeURIComponent(startVal)}&end=${encodeURIComponent(endVal)}`;

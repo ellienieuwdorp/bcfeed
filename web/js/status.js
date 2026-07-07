@@ -45,8 +45,8 @@ export function showError(message) {
   }
   const tableWrapper = document.querySelector(".table-wrapper");
   if (tableWrapper) tableWrapper.style.display = "none";
-  const wireframe = document.getElementById("scrape-wireframe");
-  if (wireframe) wireframe.style.display = "none";
+  const scrapePanel = document.getElementById("scrape-panel");
+  if (scrapePanel) scrapePanel.style.display = "none";
 }
 
 // Non-blocking variant of showError: surfaces a message without hiding the
@@ -82,23 +82,23 @@ export function logClear() {
   if (populateLog) populateLog.textContent = "";
 }
 
-export function logSetColor(color) {
-  if (populateLog) populateLog.style.color = color;
+// Toggle the accent highlight on the status log (WP-19 · CQ-35: the former
+// inline color assignment is now a class so no color literal is injected here).
+export function logHighlight(on) {
+  if (populateLog) populateLog.classList.toggle("log-highlight", !!on);
 }
 
-// General inline status-text primitive (used by the provider controller for
-// its per-action status lines). Inline colors are preserved verbatim here; the
-// class-ification is WP-19/20 (UIR-30). This is the single home for status text
-// coloring so that normalization lands in one place.
+// General status-text primitive (used by the provider controller for its
+// per-action status lines). Tone is expressed via classes (WP-19 · CQ-35), not
+// injected inline colors, so the single home for status-text coloring is CSS.
 export function setStatus(element, message, tone = "muted") {
   if (!element) return;
   element.textContent = message || "";
+  element.classList.remove("status-tone-error", "status-tone-success");
   if (tone === "error") {
-    element.style.color = "#b83a3a";
+    element.classList.add("status-tone-error");
   } else if (tone === "success") {
-    element.style.color = "var(--accent)";
-  } else {
-    element.style.color = "var(--muted)";
+    element.classList.add("status-tone-success");
   }
 }
 
@@ -139,12 +139,12 @@ export function updateSelectionStatusLog() {
       : `Selected time period:\n\n${fromVal} to ${toVal}\n\n${totalDays - populatedDays} of ${totalDays} selected days not yet populated.\n\nClick "Populate release list" to populate all dates in the selected range.`;
 
     populateLog.innerHTML = msg.replace(/\n/g, "<br>");
-    populateLog.style.color = allPopulated ? "var(--muted)" : "#64a8ff";
+    populateLog.classList.toggle("log-highlight", !allPopulated);
 
     const rangeReleases = releases.filter((r) => withinSelectedRange(r) && r.url);
     const hasPreloadableReleases = rangeReleases.some((r) => !isEnriched(r));
     if (allPopulated && hasPreloadableReleases) {
-      msg = `\n\n<span style="color:#64a8ff;">For faster browsing, "Star" the releases you're interested in to pre-load their Bandcamp player widgets, then filter using the "Starred" button at the top right.\n\nYou can also click 'Preload release data' to pre-fetch Bandcamp players for all releases in this date range.</span>`;
+      msg = `\n\n<span class="log-highlight">For faster browsing, "Star" the releases you're interested in to pre-load their Bandcamp player widgets, then filter using the "Starred" button at the top right.\n\nYou can also click 'Preload release data' to pre-fetch Bandcamp players for all releases in this date range.</span>`;
       populateLog.innerHTML += msg.replace(/\n/g, "<br>");
     }
   }
@@ -228,7 +228,5 @@ export function updateHeaderRange(count = null) {
       preloadBtn.textContent = "Preload release data";
       preloadBtn.title = "Preload unavailable";
     }
-    preloadBtn.style.opacity = preloadBtn.disabled ? "0.6" : "1";
-    preloadBtn.style.cursor = preloadBtn.disabled ? "not-allowed" : "pointer";
   }
 }

@@ -23,7 +23,7 @@ const calendarRangeMonth = document.getElementById("calendar-range-month");
 const dateFilterFrom = document.getElementById("date-filter-from");
 const dateFilterTo = document.getElementById("date-filter-to");
 const filterByDateToggle = document.getElementById("filter-by-date");
-const scrapePanel = document.getElementById("scrape-wireframe");
+const scrapePanel = document.getElementById("scrape-panel");
 const selectMonthBtn = document.getElementById("select-month-btn");
 const CALENDAR_STATE_KEY = "bc_calendar_state_v1";
 
@@ -92,7 +92,7 @@ export function renderCalendar(type) {
     dateLabel.className = "date-label";
     dateLabel.textContent = String(cellDate.getDate());
     if (scrapeStatus.scraped.has(key)) {
-      cell.classList.add("unseen-day");
+      cell.classList.add("populated-day");
     }
     cell.appendChild(dateLabel);
     const dots = document.createElement("div");
@@ -100,8 +100,6 @@ export function renderCalendar(type) {
     if (unseenByDay.has(key)) {
       const dot = document.createElement("span");
       dot.className = "dot unseen";
-      dot.style.background = "#ff5f5f";
-      dot.style.borderColor = "rgba(0,0,0,0.25)";
       dots.appendChild(dot);
     }
     cell.appendChild(dots);
