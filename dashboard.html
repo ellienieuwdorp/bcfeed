@@ -145,6 +145,7 @@
               <div class="calendar-card calendar-card-secondary">
                 <div class="action-group">
                   <div class="selected-range-label">Selected dates</div>
+                  <div class="calendar-summary" id="calendar-summary"></div>
                   <button id="populate-range" class="button populate-button">
                     Populate release list
                   </button>
@@ -203,6 +204,9 @@
         </header>
         <div id="loading-state" class="status-bar status-centered">Loading releases…</div>
         <div id="error-state" class="status-bar error-banner" style="display: none"></div>
+        <!-- Banner region (WP-22 · UXP-19/UXP-20): persistent, actionable
+             failure/connection banners render here, above the table. -->
+        <div id="banner-region" class="banner-region"></div>
         <div class="table-wrapper">
           <table aria-label="Bandcamp releases">
             <thead>
@@ -245,25 +249,47 @@
             No releases match the current filter.
           </div>
         </div>
-        <div class="calendar-log full-width">
-          <div class="calendar-label status-label">
-            <span class="status-heading">Status</span>
+        <!-- Activity strip (WP-22 · UXP-2 / UIR-22-24): the raw 200px Status box
+             is retired. A single-row strip carries the plain-language status
+             line + a determinate progress bar during a run, the release count,
+             the keyboard hint, and a collapsed "Details" disclosure holding the
+             raw streamed log for power users (empty + collapsed by default). -->
+        <div class="activity-strip" id="activity-strip">
+          <div class="activity-status">
+            <svg class="activity-icon icon" id="activity-icon" aria-hidden="true" hidden>
+              <use href="#icon-loader"></use>
+            </svg>
+            <span class="activity-line" id="activity-line" aria-live="polite"></span>
+          </div>
+          <div class="activity-progress" id="activity-progress" hidden>
+            <div
+              class="progress-track"
+              id="progress-bar"
+              role="progressbar"
+              aria-label="Loading releases"
+              aria-valuemin="0"
+              aria-valuemax="100"
+            >
+              <span class="progress-fill" id="progress-fill"></span>
+            </div>
+          </div>
+          <div class="activity-meta">
+            <span id="activity-count" class="detail-meta count-label"></span>
+            <span class="activity-hint">↑↓ move · Enter play · s star · u unseen</span>
             <button
               type="button"
               id="status-toggle"
-              class="button status-toggle"
-              aria-label="Toggle status details"
-              aria-expanded="true"
+              class="button activity-details-toggle"
+              aria-expanded="false"
+              aria-controls="populate-log"
             >
+              Details
               <svg class="status-carat icon" aria-hidden="true">
                 <use href="#icon-chevron-down"></use>
               </svg>
             </button>
           </div>
-          <div id="populate-log" class="scrollbox full-width"></div>
-        </div>
-        <div class="status-bar">
-          <span id="header-count-label" class="detail-meta count-label"></span>
+          <div id="populate-log" class="activity-detail full-width" hidden></div>
         </div>
       </main>
     </div>
@@ -484,20 +510,6 @@
         </div>
       </div>
     </div>
-    <div id="server-down-backdrop" class="server-down-backdrop">
-      <div
-        class="server-down-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label="bcfeed connection lost"
-      >
-        <p class="modal-lead">
-          Can't reach bcfeed. Restart the app, then try again — this message will clear on its own
-          once the app is back.
-        </p>
-        <button id="server-down-retry" class="button" type="button">Try again</button>
-      </div>
-    </div>
     <div id="max-results-backdrop" class="max-results-backdrop">
       <div class="max-results-modal" role="dialog" aria-modal="true" aria-label="Too many results">
         Exceeded the maximum number of results per Gmail search. Try again with a shorter date
@@ -554,6 +566,9 @@
       </div>
     </div>
 
+    <!-- Toast region (WP-22 · UXP-2/UXP-13): transient outcome toasts stack here,
+         bottom-right, announced politely. -->
+    <div id="toast-region" class="toast-region" role="status" aria-live="polite"></div>
     <script type="module" src="/web/js/main.js"></script>
   </body>
 </html>

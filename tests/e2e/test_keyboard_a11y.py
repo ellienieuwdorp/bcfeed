@@ -297,5 +297,5 @@ def test_static_a11y_sanity(page, app_server, seed_data):
             named: !!(d.getAttribute('aria-label') || d.getAttribute('aria-labelledby')),
         }))"""
     )
-    assert len(dialogs) == 5, f"expected 5 dialogs, saw {len(dialogs)}"
+    assert len(dialogs) == 4, f"expected 4 dialogs, saw {len(dialogs)}"
     assert all(d["modal"] == "true" and d["named"] for d in dialogs), dialogs

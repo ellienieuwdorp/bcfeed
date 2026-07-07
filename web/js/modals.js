@@ -1,16 +1,17 @@
-// Modal surfaces (WP-18 · ARC-4/ARCH-5).
+// Modal surfaces (WP-18 · ARC-4/ARCH-5; WP-22 · UXP-19/UXP-20).
 //
-// Visibility for the server-down, max-results, missing-credentials and settings
-// modals, plus the Gmail credential flow (load/clear) that lives inside the
-// load-credentials modal. All status output routes through status.js, so this
-// module never writes the status log directly.
+// Visibility for the max-results, missing-credentials and settings modals, plus
+// the Gmail credential flow (load/clear) that lives inside the load-credentials
+// modal. The server-down full-screen modal is gone — its recovery is now a
+// non-blocking banner (see main.js + api.js). Credential outcomes surface as
+// toasts (success) / banners (failure); detail still flows to the Details log.
 
 import { config, csrfFetch as fetch } from "./config.js";
-import { endpoints, checkServerAlive } from "./api.js";
-import { logReplace } from "./status.js";
+import { endpoints } from "./api.js";
+import { logAppendLine } from "./status.js";
+import { showToast, showBanner, dismissBanner } from "./feedback.js";
 
-const serverDownBackdrop = document.getElementById("server-down-backdrop");
-const serverDownRetry = document.getElementById("server-down-retry");
+const GMAIL_BANNER = "gmail-connect";
 const maxResultsBackdrop = document.getElementById("max-results-backdrop");
 const missingTokenBackdrop = document.getElementById("missing-token-backdrop");
 const missingTokenClose = document.getElementById("missing-token-close");
@@ -122,19 +123,6 @@ document.addEventListener("keydown", (evt) => {
   }
 });
 
-// --- Server-down modal ------------------------------------------------------
-let serverDownShown = false;
-export function showServerDownModal() {
-  if (serverDownShown) return;
-  serverDownShown = true;
-  openModal(serverDownBackdrop);
-}
-export function hideServerDownModal() {
-  if (!serverDownShown) return;
-  serverDownShown = false;
-  if (serverDownBackdrop) closeModal(serverDownBackdrop);
-}
-
 // --- Max-results modal ------------------------------------------------------
 export function showMaxResultsModal() {
   openModal(maxResultsBackdrop);
@@ -178,18 +166,21 @@ function wireClearCreds() {
       const resp = await fetch(endpoints.clearCreds, { method: "POST" });
       const data = await resp.json().catch(() => ({}));
       const joinedLogs = Array.isArray(data.logs) ? data.logs.join("\n") : "";
+      if (joinedLogs) logAppendLine(joinedLogs);
       if (!resp.ok) {
-        const msg = data.error || "Failed to clear credentials.";
-        const next = joinedLogs ? `${msg}\n${joinedLogs}` : msg;
-        logReplace(next);
-        alert(msg);
+        // Plain-language banner — never the raw server/keychain text (WP-22).
+        showBanner(GMAIL_BANNER, "Couldn't disconnect Gmail. Restart bcfeed and try again.", {
+          kind: "error",
+        });
       } else {
-        logReplace(joinedLogs || "Credentials reloaded.");
+        dismissBanner(GMAIL_BANNER);
+        showToast("Gmail disconnected.", { kind: "success" });
       }
     } catch (err) {
-      const msg = String(err || "Failed to load credentials.");
-      logReplace(msg);
-      alert(msg);
+      console.warn("Failed to clear credentials", err);
+      showBanner(GMAIL_BANNER, "Couldn't disconnect Gmail. Restart bcfeed and try again.", {
+        kind: "error",
+      });
     } finally {
       clearCredsBtn.disabled = false;
       clearCredsBtn.textContent = original || "Clear credentials";
@@ -217,18 +208,23 @@ function wireLoadCreds() {
         // Server briefly unreachable — keep polling until the deadline.
       }
       if (!data) continue;
+      if (data.message) logAppendLine(data.message);
       if (data.status === "done") {
-        logReplace(data.message || "Gmail connected.");
         config.missingToken = false;
+        dismissBanner(GMAIL_BANNER);
+        showToast("Gmail connected.", { kind: "success" });
         return;
       }
       if (data.status === "failed" || data.status === "idle") {
-        logReplace(data.message || "The Gmail connection didn't complete. Try again.");
+        showBanner(GMAIL_BANNER, "The Gmail sign-in didn't finish. Try connecting again.", {
+          kind: "error",
+        });
         return;
       }
-      if (data.message) logReplace(data.message);
     }
-    logReplace("The Gmail connection didn't complete. Try again.");
+    showBanner(GMAIL_BANNER, "The Gmail sign-in didn't finish. Try connecting again.", {
+      kind: "error",
+    });
   };
 
   const doLoadCreds = async () => {
@@ -243,19 +239,21 @@ function wireLoadCreds() {
       const resp = await fetch(endpoints.loadCreds, { method: "POST", body: form });
       const data = await resp.json().catch(() => ({}));
       const joinedLogs = Array.isArray(data.logs) ? data.logs.join("\n") : "";
+      if (joinedLogs) logAppendLine(joinedLogs);
       if (!resp.ok) {
-        const msg = data.error || "Failed to load credentials.";
-        const next = joinedLogs ? `${msg}\n${joinedLogs}` : msg;
-        logReplace(next);
-        alert(msg);
+        showBanner(GMAIL_BANNER, "Couldn't connect Gmail. Check the access file and try again.", {
+          kind: "error",
+        });
       } else {
-        logReplace(joinedLogs || "Credentials saved. Continue in your browser…");
+        dismissBanner(GMAIL_BANNER);
+        showToast("Waiting for you to finish signing in with Google…", { kind: "info" });
         if (data.status === "waiting") pollConnectStatus();
       }
     } catch (err) {
-      const msg = String(err || "Failed to load credentials.");
-      logReplace(msg);
-      alert(msg);
+      console.warn("Failed to load credentials", err);
+      showBanner(GMAIL_BANNER, "Couldn't connect Gmail. Check the access file and try again.", {
+        kind: "error",
+      });
     } finally {
       loadCredsBtn.disabled = false;
       loadCredsBtn.textContent = original || "Load credentials";
@@ -301,7 +299,6 @@ function wireLoadCreds() {
 // Wire every modal's listeners. Called once by main.js after endpoints exist.
 export function initModals() {
   // Register every modal with the shared focus-trap/dialog manager.
-  registerModal(serverDownBackdrop, hideServerDownModal);
   registerModal(maxResultsBackdrop, hideMaxResultsModal);
   registerModal(settingsBackdrop, () => {
     resetLoadCredsBtn();
@@ -309,9 +306,6 @@ export function initModals() {
   });
   registerModal(missingTokenBackdrop, hideMissingTokenModal);
 
-  if (serverDownRetry) {
-    serverDownRetry.addEventListener("click", () => checkServerAlive());
-  }
   if (maxResultsBackdrop) {
     maxResultsBackdrop.addEventListener("click", (e) => {
       if (e.target === maxResultsBackdrop) hideMaxResultsModal();

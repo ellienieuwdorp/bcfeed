@@ -8,7 +8,6 @@
 import { config, csrfFetch as fetch } from "./config.js";
 import { setReleases } from "./state.js";
 import { logAppendLine } from "./status.js";
-import { showServerDownModal, hideServerDownModal } from "./modals.js";
 
 // The single source of truth for endpoint URLs. Populated once, post-config.
 export const endpoints = {
@@ -134,8 +133,20 @@ export async function persistStarredRemote(url, starred) {
 }
 
 // --- Health poll ------------------------------------------------------------
+// The 2-consecutive-failure blip tolerance from WP-07 is unchanged; only the
+// presentation moved (WP-22 · UXP-20): instead of a latching full-screen modal,
+// main.js registers non-blocking handlers here (banner + control-disabling on
+// down, recovery toast on up). The table stays browsable throughout.
 let healthFailureCount = 0;
-const HEALTH_FAILURES_BEFORE_MODAL = 2;
+let serverDownActive = false;
+const HEALTH_FAILURES_BEFORE_BANNER = 2;
+
+let onServerDown = () => {};
+let onServerUp = () => {};
+export function setConnectionHandlers(handlers = {}) {
+  if (typeof handlers.onDown === "function") onServerDown = handlers.onDown;
+  if (typeof handlers.onUp === "function") onServerUp = handlers.onUp;
+}
 
 export async function checkServerAlive() {
   if (!endpoints.health) return;
@@ -150,9 +161,12 @@ export async function checkServerAlive() {
     });
     clearTimeout(timer);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    // Healthy again: reset the failure streak and recover the UI.
+    // Healthy again: reset the failure streak and, if we had gone down, recover.
     healthFailureCount = 0;
-    hideServerDownModal();
+    if (serverDownActive) {
+      serverDownActive = false;
+      onServerUp();
+    }
   } catch (err) {
     clearTimeout(timer);
     if (!online) {
@@ -166,8 +180,9 @@ export async function checkServerAlive() {
       return;
     }
     healthFailureCount += 1;
-    if (healthFailureCount >= HEALTH_FAILURES_BEFORE_MODAL) {
-      showServerDownModal();
+    if (healthFailureCount >= HEALTH_FAILURES_BEFORE_BANNER && !serverDownActive) {
+      serverDownActive = true;
+      onServerDown();
     }
   }
 }

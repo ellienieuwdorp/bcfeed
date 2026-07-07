@@ -5,10 +5,11 @@
 
 import { csrfFetch as fetch } from "./config.js";
 import { endpoints } from "./api.js";
-import { setStatus, logReplace } from "./status.js";
+import { setStatus } from "./status.js";
 import { state, releases } from "./state.js";
 import { renderTable } from "./table.js";
 import { toggleSettings } from "./modals.js";
+import { showBanner } from "./feedback.js";
 
 const providerSelect = document.getElementById("provider-select");
 const gmailConfigPanel = document.getElementById("gmail-config-panel");
@@ -387,10 +388,15 @@ async function performReset() {
     delete r.art_url;
   });
   renderTable();
-  logReplace("Cache has been reset.");
   toggleSettings(false);
   if (hadError && clearCache) {
-    alert("Could not clear disk cache (proxy not reachable). Run the app/proxy and try again.");
+    showBanner(
+      "reset-error",
+      "Couldn't reach bcfeed. Make sure it's still running, then try again.",
+      {
+        kind: "error",
+      },
+    );
   } else {
     window.location.reload();
   }

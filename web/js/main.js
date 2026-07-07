@@ -11,9 +11,17 @@ import {
   loadViewedSet,
   loadStarredSet,
   checkServerAlive,
+  setConnectionHandlers,
 } from "./api.js";
 import { state, setRenderHandlers, renderCounts } from "./state.js";
-import { setLoading, hideLoading, showError, showNotice, logReplace } from "./status.js";
+import {
+  setLoading,
+  hideLoading,
+  showError,
+  showNotice,
+  updateHeaderRange,
+  toggleDetails,
+} from "./status.js";
 import { renderTable, refreshToggleButtons, initTable } from "./table.js";
 import {
   renderCalendar,
@@ -22,8 +30,9 @@ import {
   fetchScrapeStatus,
 } from "./calendar.js";
 import { initModals } from "./modals.js";
-import { initPopulate } from "./populate.js";
+import { initPopulate, updatePopulateButton } from "./populate.js";
 import { initSettings } from "./settings.js";
+import { showToast, showBanner, dismissBanner, setControlsOffline } from "./feedback.js";
 
 const THEME_KEY = "bc_dashboard_theme";
 const SHOW_CACHED_KEY = "bc_show_cached_badges";
@@ -86,15 +95,11 @@ function initChrome() {
     });
   }
 
-  const statusLogCard = document.querySelector(".calendar-log");
-  const statusToggleBtn = document.getElementById("status-toggle");
-  if (statusLogCard && statusToggleBtn) {
-    statusLogCard.classList.remove("collapsed");
-    statusToggleBtn.setAttribute("aria-expanded", "true");
-    statusToggleBtn.addEventListener("click", () => {
-      const isCollapsed = statusLogCard.classList.toggle("collapsed");
-      statusToggleBtn.setAttribute("aria-expanded", String(!isCollapsed));
-    });
+  // The activity strip's "Details" disclosure (WP-22 · UIR-23): collapsed +
+  // empty by default; the streamed raw log flows into it for power users.
+  const detailsToggle = document.getElementById("status-toggle");
+  if (detailsToggle) {
+    detailsToggle.addEventListener("click", () => toggleDetails());
   }
 
   const sidebar = document.querySelector("aside");
@@ -170,10 +175,6 @@ async function main() {
   setRenderHandlers(renderTable, () => renderCalendar("range"));
 
   applyDevSettingsVisibility();
-  if (config.clearStatusOnLoad) {
-    // Route through the single status-log writer (status.js).
-    logReplace("Select a date range to display.");
-  }
   initTheme();
   forceCachedForNonDev();
 
@@ -183,6 +184,32 @@ async function main() {
   initPopulate();
   initCalendar();
   initChrome();
+
+  // Server-down / recovery (WP-22 · UXP-20): a non-blocking banner instead of a
+  // latching modal. The table stays browsable; mutating controls disable with
+  // an explanation; reconnection auto-dismisses the banner and toasts recovery.
+  setConnectionHandlers({
+    onDown: () => {
+      state.serverOffline = true;
+      setControlsOffline(true);
+      updatePopulateButton();
+      updateHeaderRange();
+      showBanner(
+        "server-down",
+        "bcfeed isn't running. Start it from Terminal — this page reconnects on its own.",
+        { kind: "warn", dismissible: false },
+      );
+    },
+    onUp: () => {
+      state.serverOffline = false;
+      dismissBanner("server-down");
+      setControlsOffline(false);
+      updatePopulateButton();
+      updateHeaderRange();
+      refreshToggleButtons();
+      showToast("Reconnected.", { kind: "success" });
+    },
+  });
 
   setTimeout(() => checkServerAlive(), 500);
   setInterval(() => checkServerAlive(), 5000);

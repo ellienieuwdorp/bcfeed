@@ -28,6 +28,11 @@ export const state = {
   dateFilterTo: "",
   filterByDate: true,
   showCachedBadges: true,
+  // WP-22 · UXP-20: true while the local server is unreachable. Read by the
+  // populate-button owner (populate.js) and the preload-button owner
+  // (status.js) so a calendar click mid-outage cannot re-enable a mutating
+  // control the server can't service.
+  serverOffline: false,
 };
 
 // `releases` is reassigned wholesale by setReleases; importers read it as a
