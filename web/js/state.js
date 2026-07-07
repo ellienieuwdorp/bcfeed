@@ -16,8 +16,13 @@ import {
 export const state = {
   sortKey: "date",
   direction: "desc",
-  showLabels: new Set(),
-  showOnlyLabels: new Set(),
+  // WP-25 · UXP-15/JS-5: the label filter tracks EXCLUSIONS, not inclusions —
+  // a set of page/label names the user has hidden. Empty = everything shown.
+  // Modelling hidden labels (rather than shown ones) is what makes the choice
+  // survive month/range navigation: a label that appears in a newly-visited
+  // range is simply "not excluded" and shows by default, so re-render never has
+  // to (and never does) reset the selection to "all" (the JS-5 bug).
+  hiddenLabels: new Set(),
   viewed: new Set(),
   starred: new Set(),
   showOnlyStarred: false,

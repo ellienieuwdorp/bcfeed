@@ -12,11 +12,14 @@ import {
   releases,
   releaseKey,
   releaseMap,
+  scrapeStatus,
   scheduleRender,
   renderCounts,
   esc,
   safeHttpUrl,
   formatDate,
+  parseDateString,
+  isoKeyFromDate,
   withinSelectedRange,
   updateStarButton,
   markCachedBadge,
@@ -25,8 +28,9 @@ import {
   updateReadDot,
   markVisibleRows,
 } from "./state.js";
-import { renderFilters } from "./filters.js";
-import { ensureEmbed } from "./api.js";
+import { renderFilters, initFilters } from "./filters.js";
+import { ensureEmbed, persistViewedBatchRemote } from "./api.js";
+import { showToast } from "./feedback.js";
 import { updateHeaderRange } from "./status.js";
 import {
   applyEnrichGlyph,
@@ -42,7 +46,13 @@ const hideViewedBtn = document.getElementById("hide-viewed-btn");
 const showStarredBtn = document.getElementById("show-starred-btn");
 const markSeenBtn = document.getElementById("mark-seen");
 const markUnseenBtn = document.getElementById("mark-unseen");
+const filterChip = document.getElementById("filter-chip");
+const tableCount = document.getElementById("table-count");
+const emptyTitle = document.getElementById("empty-state-title");
+const emptyAction = document.getElementById("empty-state-action");
 const showCachedToggle = document.getElementById("show-cached-toggle");
+
+const SORT_LABEL = { date: "date", artist: "artist", title: "title", page_name: "label" };
 const SHOW_CACHED_KEY = "bc_show_cached_badges";
 
 function pageUrlFor(release) {
@@ -200,11 +210,10 @@ export function renderTable() {
   renderFilters(dateFiltered);
   const filtered = dateFiltered.filter((r) => {
     const key = releaseKey(r);
-    const useShowOnly = state.showOnlyLabels.size > 0;
-    const activeSet = useShowOnly ? state.showOnlyLabels : state.showLabels;
-    if (activeSet.size > 0) {
-      if (r.page_name && !activeSet.has(r.page_name)) return false;
-    }
+    // Exclusion-set label filter (WP-25 · UXP-15): a release is hidden only when
+    // its own label is explicitly excluded. Releases with no label are
+    // unfilterable and always shown.
+    if (r.page_name && state.hiddenLabels.has(r.page_name)) return false;
     if (state.showOnlyStarred) {
       if (!key || !state.starred.has(key)) return false;
     }
@@ -216,7 +225,6 @@ export function renderTable() {
   });
 
   const sorted = sortData(filtered);
-  if (emptyState) emptyState.style.display = sorted.length ? "none" : "block";
 
   const fragment = document.createDocumentFragment();
   sorted.forEach((release) => {
@@ -259,8 +267,216 @@ export function renderTable() {
   });
   tbody.appendChild(fragment);
 
+  updateEmptyState(dateFiltered, sorted);
+  updateTableStatus(dateFiltered, sorted);
+  updateMarkButtons(sorted.length);
   refreshSortIndicators();
   updateHeaderRange(sorted.length);
+}
+
+// --- Empty states (WP-25 · UXP-14) ------------------------------------------
+// Three distinct empty states, each with its own copy + action. The first-run /
+// no-data case is owned by the onboarding checklist (WP-23) — this element never
+// claims it, so "No releases match the current filter." never shows on a fresh
+// install. Which of the remaining two applies is routed from the in-range count
+// vs. the post-filter count.
+function selectedRangeLabel() {
+  const from = state.dateFilterFrom || state.dateFilterTo || "";
+  const to = state.dateFilterTo || state.dateFilterFrom || "";
+  if (!from && !to) return "";
+  return from === to ? from : `${from} – ${to}`;
+}
+
+function rangeFullyChecked() {
+  const from = state.dateFilterFrom || state.dateFilterTo || "";
+  const to = state.dateFilterTo || state.dateFilterFrom || "";
+  if (!from || !to) return false;
+  let a = parseDateString(from);
+  let b = parseDateString(to);
+  if (!a || !b) return false;
+  if (b < a) [a, b] = [b, a];
+  const cursor = new Date(a);
+  while (cursor <= b) {
+    if (!scrapeStatus.scraped.has(isoKeyFromDate(cursor))) return false;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return true;
+}
+
+function updateEmptyState(dateFiltered, sorted) {
+  if (!emptyState) return;
+  if (sorted.length > 0) {
+    emptyState.style.display = "none";
+    return;
+  }
+  emptyState.style.display = "flex";
+  if (dateFiltered.length > 0) {
+    // (b) In-range data exists, but the active FILTERS hide all of it.
+    if (emptyTitle) emptyTitle.textContent = "No releases match your filters.";
+    if (emptyAction) {
+      emptyAction.hidden = false;
+      emptyAction.textContent = "Clear filters";
+      emptyAction.dataset.emptyMode = "clear";
+    }
+    return;
+  }
+  // (c) No releases fall in the selected dates. If those dates were already
+  // checked, the range is genuinely empty; otherwise they simply haven't been
+  // fetched yet. Either way the affordance is the primary check action.
+  const rangeLabel = selectedRangeLabel();
+  const checked = rangeFullyChecked();
+  if (emptyTitle) {
+    emptyTitle.textContent = checked
+      ? `No new releases${rangeLabel ? ` in ${rangeLabel}` : " for these dates"}.`
+      : `No releases for these dates yet${rangeLabel ? ` (${rangeLabel})` : ""}.`;
+  }
+  if (emptyAction) {
+    emptyAction.hidden = false;
+    emptyAction.textContent = checked ? "Check again" : "Get releases";
+    emptyAction.dataset.emptyMode = "fetch";
+  }
+}
+
+// --- Count / filter status line + active-filter chip (WP-25 · UXP-16) -------
+// A persistent count/filter line owned entirely here, so it survives every
+// path that re-renders the table (load / sort / filter / mark / fetch-complete)
+// — fixing JS-4 by construction — plus a dismissible chip naming active filters.
+function updateTableStatus(dateFiltered, sorted) {
+  const n = sorted.length;
+  if (tableCount) {
+    let text = `${n} release${n === 1 ? "" : "s"}`;
+    if (n < dateFiltered.length) text += ` · filtered from ${dateFiltered.length}`;
+    const arrow = state.direction === "asc" ? "↑" : "↓";
+    text += ` · sorted by ${SORT_LABEL[state.sortKey] || state.sortKey} ${arrow}`;
+    tableCount.textContent = text;
+  }
+  updateFilterChip(dateFiltered);
+}
+
+function updateFilterChip(dateFiltered) {
+  if (!filterChip) return;
+  const parts = [];
+  if (state.hideViewed) parts.push("Unseen only");
+  if (state.showOnlyStarred) parts.push("Starred only");
+  const labelsInView = new Set(dateFiltered.map((r) => r.page_name).filter(Boolean));
+  let hiddenInView = 0;
+  labelsInView.forEach((l) => {
+    if (state.hiddenLabels.has(l)) hiddenInView += 1;
+  });
+  if (hiddenInView > 0) {
+    parts.push(`${hiddenInView} label${hiddenInView === 1 ? "" : "s"} hidden`);
+  }
+  filterChip.innerHTML = "";
+  if (!parts.length) {
+    filterChip.hidden = true;
+    return;
+  }
+  filterChip.hidden = false;
+  const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  icon.setAttribute("class", "icon filter-chip-icon");
+  icon.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  use.setAttribute("href", "#icon-funnel");
+  icon.appendChild(use);
+  const text = document.createElement("span");
+  text.className = "filter-chip-text";
+  text.textContent = `Filters: ${parts.join(" · ")}`;
+  const clear = document.createElement("button");
+  clear.type = "button";
+  clear.className = "filter-chip-clear";
+  clear.textContent = "Clear";
+  clear.addEventListener("click", clearAllFilters);
+  filterChip.appendChild(icon);
+  filterChip.appendChild(text);
+  filterChip.appendChild(clear);
+}
+
+// Clear label + unseen + starred filters (never the date selection) — shared by
+// the (b) empty-state action and the filter chip's Clear.
+function clearAllFilters() {
+  state.hiddenLabels = new Set();
+  state.showOnlyStarred = false;
+  if (state.hideViewed) {
+    state.hideViewed = false;
+    state.hideViewedSnapshot = new Set();
+  }
+  refreshToggleButtons();
+  scheduleRender({ table: true });
+}
+
+// --- Mark N shown as seen/unseen + undo (WP-25 · UXP-16) --------------------
+// The count is the exact number of currently-visible (filtered) rows and it
+// operates on precisely those, via the WP-17 batch endpoint (one store write).
+// An undo toast with a 10s window restores the EXACT prior per-row seen set.
+function updateMarkButtons(n) {
+  const disabled = state.serverOffline || n === 0;
+  if (markSeenBtn) {
+    markSeenBtn.textContent = `Mark ${n} shown as seen`;
+    markSeenBtn.disabled = disabled;
+  }
+  if (markUnseenBtn) {
+    markUnseenBtn.textContent = `Mark ${n} shown as unseen`;
+    markUnseenBtn.disabled = disabled;
+  }
+}
+
+function collectShownRows() {
+  return Array.from(document.querySelectorAll("#release-rows tr.data-row"))
+    .map((row) => {
+      const key = row.dataset.key;
+      const release = key ? releaseMap.get(key) : null;
+      return { key, url: (release && release.url) || key, wasViewed: state.viewed.has(key) };
+    })
+    .filter((r) => r.key);
+}
+
+function markShownRows(viewed) {
+  const snapshot = collectShownRows();
+  if (!snapshot.length) return;
+  // markVisibleRows persists the whole set through the WP-17 batch endpoint (one
+  // request / one store write) and coalesces to a single table + calendar render.
+  markVisibleRows(viewed);
+  showUndoToast(viewed, snapshot);
+}
+
+function undoMark(snapshot) {
+  const toViewed = [];
+  const toUnviewed = [];
+  snapshot.forEach(({ key, url, wasViewed }) => {
+    if (wasViewed) state.viewed.add(key);
+    else state.viewed.delete(key);
+    const row = document.querySelector(`#release-rows tr.data-row[data-key="${CSS.escape(key)}"]`);
+    if (row) {
+      updateReadDot(row.querySelector(".row-dot"), wasViewed);
+      row.classList.toggle("unseen", !wasViewed);
+    }
+    (wasViewed ? toViewed : toUnviewed).push(url);
+  });
+  // Two batch writes at most restore the EXACT mixed prior set (some rows were
+  // already seen before the bulk action) — one per target flag, empties skipped.
+  if (toViewed.length) persistViewedBatchRemote(toViewed, true);
+  if (toUnviewed.length) persistViewedBatchRemote(toUnviewed, false);
+  if (state.hideViewed) state.hideViewedSnapshot = new Set(state.viewed);
+  scheduleRender({ table: true, calendar: true });
+}
+
+function showUndoToast(viewed, snapshot) {
+  const n = snapshot.length;
+  const toast = showToast(
+    `Marked ${n} release${n === 1 ? "" : "s"} as ${viewed ? "seen" : "unseen"}`,
+    { kind: "success", ttl: 10000 },
+  );
+  if (!toast) return;
+  const undoBtn = document.createElement("button");
+  undoBtn.type = "button";
+  undoBtn.className = "button button-compact toast-action";
+  undoBtn.textContent = "Undo";
+  undoBtn.addEventListener("click", (evt) => {
+    evt.stopPropagation();
+    undoMark(snapshot);
+    toast.remove();
+  });
+  toast.appendChild(undoBtn);
 }
 
 // --- Delegated row interaction (attached once) ------------------------------
@@ -459,8 +675,29 @@ export function initTable() {
       scheduleRender({ table: true });
     });
   }
-  if (markSeenBtn) markSeenBtn.addEventListener("click", () => markVisibleRows(true));
-  if (markUnseenBtn) markUnseenBtn.addEventListener("click", () => markVisibleRows(false));
+  if (markSeenBtn) markSeenBtn.addEventListener("click", () => markShownRows(true));
+  if (markUnseenBtn) markUnseenBtn.addEventListener("click", () => markShownRows(false));
+  if (emptyAction) {
+    emptyAction.addEventListener("click", () => {
+      if (emptyAction.dataset.emptyMode === "clear") {
+        clearAllFilters();
+      } else {
+        const populateBtn = document.getElementById("populate-range");
+        if (populateBtn) populateBtn.click();
+      }
+    });
+  }
+  // The "?" shortcuts popover (a <details>) closes on an outside click or Escape.
+  const shortcutsHelp = document.getElementById("shortcuts-help");
+  if (shortcutsHelp) {
+    document.addEventListener("click", (evt) => {
+      if (shortcutsHelp.open && !shortcutsHelp.contains(evt.target)) shortcutsHelp.open = false;
+    });
+    document.addEventListener("keydown", (evt) => {
+      if (evt.key === "Escape" && shortcutsHelp.open) shortcutsHelp.open = false;
+    });
+  }
+  initFilters();
 
   if (showCachedToggle) {
     const savedShowCached = localStorage.getItem(SHOW_CACHED_KEY);

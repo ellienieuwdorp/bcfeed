@@ -110,8 +110,13 @@
               <div class="calendar-card calendar-card-primary" id="calendar-card">
                 <div class="calendar-label">
                   <div class="calendar-meta">
-                    <button type="button" class="calendar-today-btn" data-cal-today="range">
-                      Today
+                    <button
+                      type="button"
+                      class="calendar-today-btn"
+                      data-cal-today="range"
+                      title="Jump to the latest selectable date (yesterday)"
+                    >
+                      Latest
                     </button>
                     <div class="calendar-nav">
                       <button type="button" data-cal-nav="range-prev" aria-label="Previous month">
@@ -131,12 +136,38 @@
                 <div class="calendar-grid" id="calendar-range"></div>
                 <div class="calendar-legend">
                   <span class="calendar-hint">Shift-click to select a range</span>
-                  <span class="legend-grid">
-                    <span class="legend-swatch-populated"></span>
-                    <span>Checked</span>
-                    <span class="legend-swatch-unseen"></span>
-                    <span>Has new releases</span>
-                  </span>
+                  <!-- Legend built from the REAL day-cell components (UXP-17):
+                       each swatch is an actual .calendar-day carrying the state
+                       class it names, so the legend can never drift from the
+                       grid. The mini cells are aria-hidden; the text labels
+                       carry the meaning. -->
+                  <div class="legend-grid">
+                    <span class="legend-item">
+                      <span class="calendar-day legend-cell populated-day" aria-hidden="true">
+                        <span class="date-label">1</span>
+                      </span>
+                      Checked
+                    </span>
+                    <span class="legend-item">
+                      <span class="calendar-day legend-cell populated-day" aria-hidden="true">
+                        <span class="date-label">2</span>
+                        <span class="dot-strip"><span class="dot unseen"></span></span>
+                      </span>
+                      New releases
+                    </span>
+                    <span class="legend-item">
+                      <span class="calendar-day legend-cell in-range" aria-hidden="true">
+                        <span class="date-label">3</span>
+                      </span>
+                      Selected
+                    </span>
+                    <span class="legend-item">
+                      <span class="calendar-day legend-cell in-range gap" aria-hidden="true">
+                        <span class="date-label">4</span>
+                      </span>
+                      Not checked yet
+                    </span>
+                  </div>
                   <button id="select-month-btn" class="button select-month-button">
                     Select entire month
                   </button>
@@ -151,8 +182,6 @@
                     <svg class="icon" aria-hidden="true"><use href="#icon-check-circle"></use></svg>
                     Up to date for these dates
                   </p>
-                  <button id="mark-seen" class="button button-compact">Mark as seen</button>
-                  <button id="mark-unseen" class="button button-compact">Mark as unseen</button>
                 </div>
               </div>
               <div class="hidden">
@@ -162,7 +191,13 @@
             </div>
           </div>
         </details>
-        <div class="filter-title">Filter by label / page</div>
+        <div class="filter-head">
+          <span class="filter-title">Filter by label / page</span>
+          <span class="filter-controls">
+            <button type="button" id="filter-all" class="filter-control">All</button>
+            <button type="button" id="filter-none" class="filter-control">None</button>
+          </span>
+        </div>
         <div id="label-filters" class="filter-list"></div>
         <button id="back-to-top" class="button back-to-top" type="button">Back to top</button>
       </aside>
@@ -301,6 +336,20 @@
             </ol>
           </div>
         </section>
+        <!-- Table toolbar (WP-25 · UXP-16): mark-seen/unseen are TABLE actions,
+             not date-range actions, so they live here by the table with a live
+             count of the rows they affect; the count/filter status line and the
+             active-filter chip sit alongside. Hidden during onboarding. -->
+        <div class="table-toolbar" id="table-toolbar">
+          <div class="table-toolbar-actions">
+            <button id="mark-seen" class="button button-compact">Mark as seen</button>
+            <button id="mark-unseen" class="button button-compact">Mark as unseen</button>
+          </div>
+          <div class="table-toolbar-status">
+            <span id="table-count" class="table-count detail-meta"></span>
+            <span id="filter-chip" class="filter-chip" hidden></span>
+          </div>
+        </div>
         <div class="table-wrapper">
           <table aria-label="Bandcamp releases">
             <thead>
@@ -339,8 +388,19 @@
             </thead>
             <tbody id="release-rows"></tbody>
           </table>
+          <!-- Empty state (WP-25 · UXP-14): first-run/no-data is owned by the
+               onboarding checklist, so this element only ever carries the two
+               data-present cases — filters-hide-everything and range-is-empty —
+               each with its own copy + single-click action, set by table.js. -->
           <div id="empty-state" class="empty-state" style="display: none">
-            No releases match the current filter.
+            <svg class="empty-state-icon icon" aria-hidden="true"><use href="#icon-eye"></use></svg>
+            <p class="empty-state-title" id="empty-state-title"></p>
+            <button
+              type="button"
+              class="button button-primary empty-state-action"
+              id="empty-state-action"
+              hidden
+            ></button>
           </div>
         </div>
         <!-- Activity strip (WP-22 · UXP-2 / UIR-22-24): the raw 200px Status box
@@ -370,6 +430,55 @@
           <div class="activity-meta">
             <span id="activity-count" class="detail-meta count-label"></span>
             <span class="activity-hint">↑↓ move · Enter play · s star · u unseen</span>
+            <!-- "?" help (WP-25 · UXP-12): lists EVERY implemented shortcut and
+                 nothing that isn't implemented. A <details> popover — keyboard
+                 reachable, not a dialog (the dialog count stays at four). -->
+            <details class="shortcuts-help" id="shortcuts-help">
+              <summary
+                class="shortcuts-summary button button-icon-lg"
+                aria-label="Keyboard shortcuts"
+                title="Keyboard shortcuts"
+              >
+                <svg class="icon" aria-hidden="true"><use href="#icon-help-circle"></use></svg>
+              </summary>
+              <div class="shortcuts-panel" role="group" aria-label="Keyboard shortcuts">
+                <div class="shortcuts-title">Keyboard shortcuts</div>
+                <dl class="shortcuts-list">
+                  <div class="shortcut">
+                    <dt><kbd>↑</kbd><kbd>↓</kbd></dt>
+                    <dd>Move between releases</dd>
+                  </div>
+                  <div class="shortcut">
+                    <dt><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd></dt>
+                    <dd>Move around the calendar</dd>
+                  </div>
+                  <div class="shortcut">
+                    <dt><kbd>Enter</kbd><kbd>Space</kbd></dt>
+                    <dd>Play a release / pick a date</dd>
+                  </div>
+                  <div class="shortcut">
+                    <dt><kbd>Shift</kbd>+<kbd>Enter</kbd></dt>
+                    <dd>Extend the date range</dd>
+                  </div>
+                  <div class="shortcut">
+                    <dt><kbd>Home</kbd><kbd>End</kbd></dt>
+                    <dd>Jump across a calendar week</dd>
+                  </div>
+                  <div class="shortcut">
+                    <dt><kbd>s</kbd></dt>
+                    <dd>Star the focused release</dd>
+                  </div>
+                  <div class="shortcut">
+                    <dt><kbd>u</kbd></dt>
+                    <dd>Mark the focused release unseen</dd>
+                  </div>
+                  <div class="shortcut">
+                    <dt><kbd>Esc</kbd></dt>
+                    <dd>Close the open player or dialog</dd>
+                  </div>
+                </dl>
+              </div>
+            </details>
             <button
               type="button"
               id="status-toggle"

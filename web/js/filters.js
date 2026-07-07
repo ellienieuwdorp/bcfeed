@@ -1,22 +1,26 @@
-// Label/page filter list (WP-18 · ARC-4/ARCH-5).
+// Label/page filter list (WP-18 · ARC-4/ARCH-5; WP-25 · UXP-15/UX-8/JS-5).
 //
-// Split out of table.js to keep both modules well under the size budget. Builds
-// the sidebar's show / show-only checkbox list and coordinates their state; a
-// checkbox change schedules a coalesced table re-render.
+// The confusing dual show / show-only checkbox pair is gone. This is now a
+// single faceted-search list: ONE checkbox per label (checked = included), a
+// hover/focus-revealed "only" affordance per row, and All / None controls at
+// the top. State is modelled as an EXCLUSION set (state.hiddenLabels): checking
+// removes a label from it, unchecking adds it. Because exclusions persist and
+// re-render only READS them (never rewrites them), unchecked labels stay
+// unchecked across month/range navigation (the JS-5 fix), and an empty
+// selection yields an empty table + the filtered-empty state — never an
+// auto-reset-to-all.
 
 import { state, releases, scheduleRender } from "./state.js";
 
-let lastLabelSignature = "";
+const allBtn = document.getElementById("filter-all");
+const noneBtn = document.getElementById("filter-none");
 
-export function syncShowCheckboxAvailability() {
-  const disableShow = state.showOnlyLabels.size > 0;
-  document.querySelectorAll("#label-filters .filter-item").forEach((item) => {
-    const show = item.querySelector('input[data-filter-role="show"]');
-    if (show) {
-      show.disabled = disableShow;
-    }
-    item.classList.toggle("show-only-active", disableShow);
-  });
+// The label universe of the currently-rendered list — cached so the All / None
+// controls (wired once) operate on exactly the labels the panel shows.
+let currentLabels = [];
+
+function isShown(label) {
+  return !state.hiddenLabels.has(label);
 }
 
 export function renderFilters(sourceList = releases) {
@@ -26,70 +30,93 @@ export function renderFilters(sourceList = releases) {
     return acc;
   }, {});
   const labels = Object.keys(counts).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+  currentLabels = labels;
   const container = document.getElementById("label-filters");
   container.innerHTML = "";
 
   if (labels.length === 0) {
     container.innerHTML = "<div class='detail-meta'>No label/page data available.</div>";
+    refreshFilterControls();
     return;
   }
-
-  const labelSignature = labels.join("||");
-  if (state.showOnlyLabels.size === 0 && labelSignature !== lastLabelSignature) {
-    state.showLabels = new Set(labels);
-  } else if (state.showLabels.size === 0) {
-    labels.forEach((label) => state.showLabels.add(label));
-  }
-  lastLabelSignature = labelSignature;
-
-  const showOnlyMode = state.showOnlyLabels.size > 0;
 
   labels.forEach((label) => {
     const wrapper = document.createElement("div");
     wrapper.className = "filter-item";
-    if (showOnlyMode) wrapper.classList.add("show-only-active");
 
     const showCheckbox = document.createElement("input");
     showCheckbox.type = "checkbox";
     showCheckbox.className = "filter-checkbox show";
-    showCheckbox.dataset.filterRole = "show";
-    showCheckbox.checked = state.showLabels.has(label);
-    showCheckbox.disabled = showOnlyMode;
+    showCheckbox.checked = isShown(label);
+    showCheckbox.setAttribute("aria-label", `Show ${label}`);
     showCheckbox.addEventListener("change", () => {
+      // Checked = included (remove from the exclusion set); unchecked = hidden.
       if (showCheckbox.checked) {
-        state.showLabels.add(label);
+        state.hiddenLabels.delete(label);
       } else {
-        state.showLabels.delete(label);
+        state.hiddenLabels.add(label);
       }
-      scheduleRender({ table: true });
-    });
-
-    const showOnlyCheckbox = document.createElement("input");
-    showOnlyCheckbox.type = "checkbox";
-    showOnlyCheckbox.className = "filter-checkbox show-only";
-    showOnlyCheckbox.dataset.filterRole = "show-only";
-    showOnlyCheckbox.checked = state.showOnlyLabels.has(label);
-    showOnlyCheckbox.addEventListener("change", () => {
-      if (showOnlyCheckbox.checked) {
-        state.showOnlyLabels.add(label);
-      } else {
-        state.showOnlyLabels.delete(label);
-      }
-      syncShowCheckboxAvailability();
       scheduleRender({ table: true });
     });
 
     const text = document.createElement("span");
+    text.className = "filter-label";
     text.textContent = label;
+
+    // The "only" affordance replaces the old show-only column: one click shows
+    // exactly this label by excluding every other label currently in view.
+    // Hidden until the row is hovered/focused (CSS), but always keyboard-
+    // reachable via Tab.
+    const only = document.createElement("button");
+    only.type = "button";
+    only.className = "filter-only";
+    only.textContent = "only";
+    only.setAttribute("aria-label", `Show only ${label}`);
+    only.addEventListener("click", () => {
+      state.hiddenLabels = new Set(currentLabels.filter((l) => l !== label));
+      scheduleRender({ table: true });
+    });
+
     const count = document.createElement("span");
     count.className = "filter-count";
     count.textContent = `(${counts[label]})`;
+
     wrapper.appendChild(showCheckbox);
-    wrapper.appendChild(showOnlyCheckbox);
     wrapper.appendChild(text);
+    wrapper.appendChild(only);
     wrapper.appendChild(count);
     container.appendChild(wrapper);
   });
 
-  syncShowCheckboxAvailability();
+  refreshFilterControls();
+}
+
+// Enable/disable the All / None controls to match the current selection so they
+// never look actionable when they would do nothing.
+function refreshFilterControls() {
+  const anyHidden = currentLabels.some((l) => state.hiddenLabels.has(l));
+  const allHidden =
+    currentLabels.length > 0 && currentLabels.every((l) => state.hiddenLabels.has(l));
+  if (allBtn) allBtn.disabled = !anyHidden;
+  if (noneBtn) noneBtn.disabled = allHidden || currentLabels.length === 0;
+}
+
+// Wire the All / None controls once (called by table.js initTable).
+export function initFilters() {
+  if (allBtn) {
+    allBtn.addEventListener("click", () => {
+      // Show everything: drop the exclusions for the labels in view. (Clearing
+      // the whole set is equivalent here and keeps things simple.)
+      state.hiddenLabels = new Set();
+      scheduleRender({ table: true });
+    });
+  }
+  if (noneBtn) {
+    noneBtn.addEventListener("click", () => {
+      // Hide every label currently in view → empty table + the filtered-empty
+      // state (never an auto-reset-to-all).
+      currentLabels.forEach((l) => state.hiddenLabels.add(l));
+      scheduleRender({ table: true });
+    });
+  }
 }

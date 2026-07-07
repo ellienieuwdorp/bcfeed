@@ -28,6 +28,10 @@ const WEEKDAY_NAMES = [
   "Saturday",
 ];
 const ARROW_KEYS = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"];
+// Today is deliberately never selectable — its notification emails aren't final
+// yet (a core invariant). Explain that on the cell instead of leaving a silent
+// grey square (WP-25 · UXP-18).
+const TODAY_TOOLTIP = "Today's emails are still arriving — check back tomorrow.";
 // The day cell that owns the grid's single tab stop (roving tabindex). Persisted
 // across re-renders so keyboard focus lands where the user left it (WP-21/JS-7).
 let activeCellKey = null;
@@ -74,6 +78,7 @@ export function renderCalendar(type) {
   const startOffset = new Date(cal.current.getFullYear(), cal.current.getMonth(), 1).getDay();
   const totalCells = 42; // 6 weeks
   const lastSelectable = getLastSelectableDate();
+  const todayKey = isoKeyFromDate(new Date());
   const startSelectedDate = cal.startKey ? parseDateString(cal.startKey) : null;
   const endSelectedDate = cal.endKey ? parseDateString(cal.endKey) : null;
 
@@ -111,6 +116,11 @@ export function renderCalendar(type) {
     if (inRange) cell.classList.add("in-range");
     const isScraped = scrapeStatus.scraped.has(key);
     if (isScraped) cell.classList.add("populated-day");
+    // The actionable gap (WP-25 · UXP-17): a day INSIDE the selection that has
+    // not been checked. It is the loudest cell on the grid — the one state that
+    // needs an action — mirrored by the "N dates not checked" summary line.
+    const isGap = (isSelected || inRange) && !isScraped && !isDisabled && !isOtherMonth;
+    if (isGap) cell.classList.add("gap");
 
     const dateLabel = document.createElement("span");
     dateLabel.className = "date-label";
@@ -137,7 +147,14 @@ export function renderCalendar(type) {
       let label = `${monthLong} ${cellDate.getDate()}, ${cellDate.getFullYear()}`;
       if (hasUnseen) label += ", has new releases";
       if (isScraped) label += ", checked";
-      if (isDisabled) label += ", unavailable";
+      else if (isGap) label += ", not checked yet";
+      if (key === todayKey) {
+        // Name the today-exclusion in the accessible name and a hover tooltip.
+        cell.title = TODAY_TOOLTIP;
+        label += ", today — still receiving emails, not selectable yet";
+      } else if (isDisabled) {
+        label += ", unavailable";
+      }
       cell.setAttribute("aria-label", label);
       if (isDisabled) {
         cell.setAttribute("aria-disabled", "true");
