@@ -312,7 +312,7 @@ def populate_harness(server_mod, monkeypatch):
     started = threading.Event()
     unblock = threading.Event()
 
-    def fake_populate(start, end, max_results, batch_size=20, log=None):
+    def fake_populate(start, end, max_results, batch_size=20, log=None, refresh=False):
         # Emit one line first: the test client fetches the stream's first
         # chunk eagerly even in non-buffered mode, so a wholly silent worker
         # would block the request instead of returning a lazy stream.
@@ -377,7 +377,7 @@ def test_normal_completion_releases_lock(server_mod, populate_harness):
 
 
 def test_worker_failure_still_releases_lock(server_mod, populate_harness, monkeypatch):
-    def exploding_populate(start, end, max_results, batch_size=20, log=None):
+    def exploding_populate(start, end, max_results, batch_size=20, log=None, refresh=False):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(server_mod, "populate_release_cache", exploding_populate)

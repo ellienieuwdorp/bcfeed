@@ -2,7 +2,6 @@ import base64
 import json
 import sys
 import time
-from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 from google.auth.exceptions import RefreshError
@@ -428,7 +427,14 @@ def _download_batch(service, msg_ids, format, log):
 
 
 def _message_entry(email_data):
-    """Build the ``{html, date, subject}`` entry for one downloaded message."""
+    """Build the ``{html, date, subject}`` entry for one downloaded message.
+
+    ``date`` is the RAW RFC 2822 ``Date:`` header — the transport no longer
+    interprets it. Day bucketing is the provider adapter's job (WP-15 ·
+    LOG-12): GmailProvider converts the header to the user's local calendar
+    date through the shared ``EmailProvider.local_date_from_header`` helper,
+    so both providers agree on which day a boundary-hour email belongs to.
+    """
     html = get_html_from_message(email_data)
 
     headers = email_data.get("payload", {}).get("headers", [])
@@ -440,14 +446,8 @@ def _message_entry(email_data):
             date_header = h.get("value")
         if name == "subject":
             subject_header = h.get("value")
-    parsed_date = None
-    if date_header:
-        try:
-            parsed_date = parsedate_to_datetime(date_header).strftime("%Y-%m-%d")
-        except Exception:
-            parsed_date = date_header
 
-    return {"html": html, "date": parsed_date, "subject": subject_header}
+    return {"html": html, "date": date_header, "subject": subject_header}
 
 
 def get_messages(service, ids, format, batch_size, log=print):

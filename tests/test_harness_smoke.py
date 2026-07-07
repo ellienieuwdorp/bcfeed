@@ -51,7 +51,9 @@ def test_frozen_today(frozen_today):
 
 
 def test_frozen_today_drives_exclude_today(frozen_today, seed):
-    # A release dated "today" (the frozen date) is dropped by exclude-today...
+    # The frozen clock drives the exclude-today logic. Updated by WP-15
+    # (LOG-2): the skip is LEDGER-only now — today's row IS persisted (data
+    # is never dropped), but the frozen "today" is never recorded as checked.
     import session_store
 
     session_store.persist_release_metadata(
@@ -69,7 +71,9 @@ def test_frozen_today_drives_exclude_today(frozen_today, seed):
         ],
         exclude_today=True,
     )
-    assert session_store.get_full_release_cache() == []
+    assert [r["date"] for r in session_store.get_full_release_cache()] == ["2025-07-01"]
+    status = session_store.scrape_status_for_range(frozen_today, frozen_today)
+    assert status["2025-07-01"] is False, "the frozen today is never recorded checked"
 
 
 def test_email_fixtures_exercise_both_provider_paths(emails):

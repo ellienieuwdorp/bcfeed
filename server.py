@@ -494,7 +494,10 @@ def scrape_status():
     if not start or not end or start > end:
         return jsonify({"error": "Invalid start/end date"}), 400
 
-    status = scrape_status_for_range(start, end)
+    # Coverage is reported for the ACTIVE provider (LOG-22): days checked by
+    # the other provider — like settling-window days (LOG-2) — read as
+    # unchecked/pending so the calendar offers them for re-check.
+    status = scrape_status_for_range(start, end, provider=get_current_provider_type())
     scraped = [day for day, is_scraped in status.items() if is_scraped]
     not_scraped = [day for day, is_scraped in status.items() if not is_scraped]
     return jsonify({"scraped": scraped, "not_scraped": not_scraped})
@@ -711,6 +714,10 @@ def _error_code_for(exc: BaseException) -> str:
 def populate_range_stream():
     start_arg = request.args.get("start") or request.args.get("from")
     end_arg = request.args.get("end") or start_arg
+    # refresh=1 (WP-15 · LOG-3/UX-12/UXP-11 backend): force a re-check of the
+    # range even when the ledger says it is fully checked. Non-destructive —
+    # merge is by canonical URL, stars/seen/embeds are untouched.
+    refresh = (request.args.get("refresh") or "").strip().lower() in {"1", "true", "yes"}
 
     # Validate and clamp max_results (CQ-04/PY-14): a non-integer or non-positive
     # value is a client error → JSON 400 (never an unhandled ValueError 500), and
@@ -785,6 +792,7 @@ def populate_range_stream():
                 max_results,
                 batch_size=20,
                 log=emitter,
+                refresh=refresh,
             )
             emitter("Populate completed.")
             q.put(

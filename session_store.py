@@ -19,7 +19,19 @@ migration (migrations.py). Legacy v1 ledgers (a plain list of ISO dates) are
 still readable pre-migration.
 
 Today is never recorded as checked (it isn't final yet) — the ``exclude_today``
-invariant is enforced on every ledger write and read.
+invariant is enforced on every ledger write and read. WP-15 (LOG-2)
+generalizes it to a trailing **settling window**: the most recent
+``SETTLING_WINDOW_DAYS`` calendar days (today included) are never recorded as
+checked. Their releases ARE persisted — the skip is ledger-only — so the days
+stay re-queryable and a late-arriving email self-heals on the next run. The
+ledger is the sole authority for "checked": a day with cached rows but no
+ledger record is still missing (re-queried).
+
+Provider-switch honesty (WP-15 · LOG-22/PY-16, decision (a)): each record's
+``source`` is consulted on read — when the caller passes the active provider
+and a day's record was produced by the *other* provider, the day reads as
+not-checked (offered for re-check) rather than silently serving the old
+provider's coverage as the new one's.
 """
 
 from __future__ import annotations
@@ -36,6 +48,13 @@ CacheType = dict[str, list[dict]]
 LedgerType = dict[datetime.date, dict]
 
 CACHE_PATH = RELEASE_CACHE_PATH
+
+# LOG-2 (WP-15): the trailing settling window. The last N calendar days —
+# today and the N-1 days before it — are never final: notification emails for
+# them may still be arriving (and timezone skew blurs the boundary by up to a
+# day, LOG-12), so the ledger never records them as checked. Constant by
+# design; no UI knob.
+SETTLING_WINDOW_DAYS = 3
 
 
 def _load_cache() -> CacheType:
@@ -83,8 +102,49 @@ def _ledger_from_raw(raw) -> LedgerType:
     return ledger
 
 
+def first_settling_date() -> datetime.date:
+    """The first day of the trailing settling window (LOG-2).
+
+    Days on/after this date (the last ``SETTLING_WINDOW_DAYS`` calendar days,
+    today included) are never recorded as checked: they are dropped on every
+    ledger write AND ignored on read, so a re-populate re-queries them and
+    late-arriving emails self-heal without manual action.
+    """
+    return _today() - datetime.timedelta(days=SETTLING_WINDOW_DAYS - 1)
+
+
+def _drop_settling_days(ledger: LedgerType) -> LedgerType:
+    """Remove settling-window (and future) days from a ledger in place."""
+    cutoff = first_settling_date()
+    for day in [day for day in ledger if day >= cutoff]:
+        del ledger[day]
+    return ledger
+
+
+def _checked_by(record: dict | None, provider: str | None) -> bool:
+    """Does this ledger record count as checked for the active provider?
+
+    LOG-22/PY-16 (decision (a), single-provider-at-a-time): a day checked by
+    the *other* provider is offered for re-check — it reads as not-checked for
+    the current provider instead of silently serving the old provider's
+    coverage. ``provider=None`` means "any provider" (callers with no provider
+    context). A record whose ``source`` is None (legacy v1 rows, or cached
+    re-persists) has unknown provenance and is trusted for any provider —
+    treating it as mismatched would force a surprise re-check of the entire
+    history.
+    """
+    if record is None:
+        return False
+    if provider is None:
+        return True
+    source = record.get("source")
+    return source is None or source == provider
+
+
 def _load_ledger() -> LedgerType:
-    return _ledger_from_raw(json_store.read_json(SCRAPE_STATUS_PATH, {}))
+    # Settling-window days are ignored on read even if an older file still
+    # lists them (lazy migration: they are dropped on the next write).
+    return _drop_settling_days(_ledger_from_raw(json_store.read_json(SCRAPE_STATUS_PATH, {})))
 
 
 def _serialize_ledger(ledger: LedgerType) -> dict:
@@ -97,21 +157,20 @@ def _serialize_ledger(ledger: LedgerType) -> dict:
 def _update_ledger(mutate) -> None:
     """Atomically load-mutate-save the ledger through json_store.
 
-    Today is always dropped on save: the exclude-today invariant means the
-    ledger can never claim today is checked (its emails are still arriving).
+    Settling-window days (today and the ``SETTLING_WINDOW_DAYS - 1`` days
+    before it) are always dropped on save: the exclude-today invariant,
+    generalized by LOG-2, means the ledger can never claim a still-settling
+    day is checked — its emails may still be arriving.
     """
 
     def mutator(raw):
         ledger = mutate(_ledger_from_raw(raw))
-        ledger.pop(_today(), None)
-        return _serialize_ledger(ledger)
+        return _serialize_ledger(_drop_settling_days(ledger))
 
     json_store.update_json(SCRAPE_STATUS_PATH, mutator, {}, indent=2)
 
 
-def _record_checked_days(
-    days: Iterable[datetime.date], *, empty: bool, source: str | None
-) -> None:
+def _record_checked_days(days: Iterable[datetime.date], *, empty: bool, source: str | None) -> None:
     """Merge day records into the ledger.
 
     Merge rule for a day already present: a checked-with-results record wins
@@ -203,8 +262,9 @@ def mark_date_range_scraped(
 def mark_dates_not_scraped(dates: Iterable[datetime.date]) -> None:
     """Explicitly mark dates as not-scraped (removes their ledger records).
 
-    # retained for WP-15/LOG-3: currently uncalled, but the re-check/reset flow
-    # resurrects it — do NOT delete as dead code (CQ-01 deviation).
+    # Resurrected in WP-15 for LOG-3: the pipeline's ``refresh=1`` re-check
+    # clears the selected days here before re-querying, so a refreshed range
+    # that comes back empty is recorded empty-again instead of left stale.
     """
     to_drop = {day for day in dates if isinstance(day, datetime.date)}
     if not to_drop:
@@ -218,28 +278,47 @@ def mark_dates_not_scraped(dates: Iterable[datetime.date]) -> None:
     _update_ledger(mutate)
 
 
-def scrape_status_for_range(start: datetime.date, end: datetime.date) -> dict[str, bool]:
+def scrape_status_for_range(
+    start: datetime.date, end: datetime.date, *, provider: str | None = None
+) -> dict[str, bool]:
     """
     Return a mapping of ISO date -> checked flag for the inclusive range.
-    Today's date is always False (not checked).
+    Settling-window days (today included) are always False — still pending
+    (LOG-2) — and, when ``provider`` is given, days checked by a different
+    provider read False too (offered for re-check, LOG-22).
     """
     status = {}
     checked = _load_ledger()
-    today = _today()
     cursor = start
     one_day = datetime.timedelta(days=1)
     while cursor <= end:
-        status[cursor.isoformat()] = cursor in checked and cursor != today
+        status[cursor.isoformat()] = _checked_by(checked.get(cursor), provider)
         cursor += one_day
     return status
 
 
 def persist_release_metadata(
-    releases: Iterable[dict], *, exclude_today: bool = True, source: str | None = None
+    releases: Iterable[dict],
+    *,
+    exclude_today: bool = True,
+    source: str | None = None,
+    mark_within: tuple[datetime.date, datetime.date] | None = None,
 ) -> None:
     """
     Save release metadata into the cache, keyed by release date.
-    Skips today's date when exclude_today is True.
+
+    Every row is persisted regardless of its date — the exclude-today /
+    settling-window skip is LEDGER-only (LOG-2): dropping a fetched release
+    would lose data, while an unmarked day merely stays re-queryable (merge
+    is by URL, so re-querying is harmless). ``exclude_today`` gates only the
+    ledger mark below (the settling-window drop applies on every write
+    regardless).
+
+    ``mark_within`` (LOG-12 query pad): when given, only persisted days inside
+    that inclusive range may be recorded checked. A padded refresh query can
+    over-fetch rows bucketed just outside the queried range; those rows are
+    still cached, but their days were only partially covered and must not be
+    claimed as checked.
 
     URLs are canonicalized on the way in (LOG-9 store-write half), so the
     release cache is only ever keyed by canonical URLs. ``source`` names the
@@ -255,7 +334,6 @@ def persist_release_metadata(
             release = {**release, "url": canonical}
         canonicalized.append(release)
     releases = canonicalized
-    today = _today()
     scraped_days: set[datetime.date] = set()
 
     def mutate_cache(cache):
@@ -264,8 +342,6 @@ def persist_release_metadata(
         for release in releases:
             day = _to_date(release.get("date"))
             if not day:
-                continue
-            if exclude_today and day == today:
                 continue
             key = day.isoformat()
             existing = cache.get(key, [])
@@ -277,18 +353,24 @@ def persist_release_metadata(
     json_store.update_json(CACHE_PATH, mutate_cache, {}, indent=2)
     # Invariant (I2): the cache write above precedes the ledger mark below —
     # a day is only ever recorded checked once its data is durable.
+    if mark_within is not None:
+        lo, hi = mark_within
+        scraped_days = {day for day in scraped_days if lo <= day <= hi}
     if scraped_days:
         mark_dates_scraped(scraped_days, exclude_today=exclude_today, empty=False, source=source)
 
 
 def cached_releases_for_range(
-    start: datetime.date, end: datetime.date
+    start: datetime.date, end: datetime.date, *, provider: str | None = None
 ) -> tuple[list[dict], list[datetime.date]]:
     """
     Return (cached_releases, missing_dates) for the inclusive date range.
-    missing_dates are days that have not been checked yet — a day is covered
-    either by cached releases or by a ledger record (which includes
-    checked-and-empty days, LOG-11).
+
+    The LEDGER is the sole authority for "checked" (LOG-2): missing_dates are
+    exactly the days without a (current-provider-valid, LOG-22) ledger record
+    — cached rows for such days are still returned for display/merge, but the
+    day is re-queried. Settling-window days are never in the ledger, so they
+    are always missing; checked-and-empty days (LOG-11) are never missing.
     """
     cache = _load_cache()
     checked = _load_ledger()
@@ -297,11 +379,10 @@ def cached_releases_for_range(
     missing: list[datetime.date] = []
     one_day = datetime.timedelta(days=1)
     while cursor <= end:
-        iso = cursor.isoformat()
-        releases_for_day = cache.get(iso)
+        releases_for_day = cache.get(cursor.isoformat())
         if releases_for_day:
             cached.extend(releases_for_day)
-        elif cursor not in checked:
+        if not _checked_by(checked.get(cursor), provider):
             missing.append(cursor)
         cursor += one_day
     return dedupe_by_url(cached), missing

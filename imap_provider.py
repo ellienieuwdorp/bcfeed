@@ -10,7 +10,6 @@ import email
 from collections.abc import Callable
 from datetime import datetime
 from email.header import decode_header
-from email.utils import parsedate_to_datetime
 
 from email_provider import (
     EmailMessage,
@@ -250,15 +249,9 @@ class ImapProvider(EmailProvider):
         # Extract HTML body
         html_content = self._extract_html(msg)
 
-        # Extract and parse date
-        date_header = msg.get("Date", "")
-        parsed_date = ""
-        if date_header:
-            try:
-                dt = parsedate_to_datetime(date_header)
-                parsed_date = dt.strftime("%Y-%m-%d")
-            except Exception:
-                pass
+        # Bucket onto the user's LOCAL calendar date via the shared provider
+        # helper (LOG-12) — the same rule the Gmail adapter applies.
+        parsed_date = self.local_date_from_header(msg.get("Date", ""))
 
         # Extract and decode subject
         subject = self._decode_header(msg.get("Subject", ""))

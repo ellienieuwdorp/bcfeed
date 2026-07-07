@@ -153,12 +153,15 @@ class GmailProvider(EmailProvider):
                 log=log,
             )
 
-            # Convert to EmailMessage format
+            # Convert to EmailMessage format. The transport hands the raw
+            # Date header through; bucketing onto the user's LOCAL calendar
+            # date happens here, via the shared provider helper (LOG-12) —
+            # the same rule the IMAP adapter applies.
             results = {}
             for msg_id, msg_data in raw_messages.items():
                 results[msg_id] = EmailMessage(
                     html=msg_data.get("html", ""),
-                    date=msg_data.get("date", ""),
+                    date=self.local_date_from_header(msg_data.get("date") or ""),
                     subject=msg_data.get("subject", ""),
                 )
 

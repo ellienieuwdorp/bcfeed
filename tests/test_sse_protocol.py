@@ -292,7 +292,7 @@ def test_max_results_exceeded_yields_max_results_code(past_gate, seed, monkeypat
 def test_auth_failure_yields_auth_code(past_gate, monkeypatch):
     from email_provider import AuthenticationError
 
-    def failing_populate(start, end, max_results, batch_size=20, log=None):
+    def failing_populate(start, end, max_results, batch_size=20, log=None, refresh=False):
         raise AuthenticationError("bad credentials")
 
     monkeypatch.setattr(past_gate, "populate_release_cache", failing_populate)
@@ -302,7 +302,7 @@ def test_auth_failure_yields_auth_code(past_gate, monkeypatch):
 
 
 def test_unexpected_worker_crash_yields_internal_code(past_gate, monkeypatch):
-    def exploding_populate(start, end, max_results, batch_size=20, log=None):
+    def exploding_populate(start, end, max_results, batch_size=20, log=None, refresh=False):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(past_gate, "populate_release_cache", exploding_populate)
@@ -331,7 +331,7 @@ def test_disconnect_then_rerequest_reports_busy(past_gate, monkeypatch):
     started = threading.Event()
     unblock = threading.Event()
 
-    def blocking_populate(start, end, max_results, batch_size=20, log=None):
+    def blocking_populate(start, end, max_results, batch_size=20, log=None, refresh=False):
         if log:
             log("worker running")
         started.set()

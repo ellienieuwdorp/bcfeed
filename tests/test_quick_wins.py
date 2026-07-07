@@ -124,7 +124,7 @@ def _drive_populate_capturing_max(server_mod, monkeypatch, max_results_qs):
     pipeline, returning the max_results the pipeline was actually called with."""
     captured: list[int] = []
 
-    def fake_populate(after, before, max_results, batch_size, log=print):
+    def fake_populate(after, before, max_results, batch_size, log=print, refresh=False):
         captured.append(max_results)
 
     # Route around real credential/keychain checks so the worker actually runs.

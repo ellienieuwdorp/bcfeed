@@ -8,7 +8,9 @@ from provider_factory import create_provider, get_current_provider_type
 from session_store import (
     cached_releases_for_range,
     collapse_date_ranges,
+    first_settling_date,
     mark_date_range_scraped,
+    mark_dates_not_scraped,
     persist_empty_date_range,
     persist_release_metadata,
 )
@@ -243,11 +245,26 @@ def construct_release_list(emails: dict, *, log=print, source: str | None = None
 
 
 def populate_release_cache(
-    after_date: str, before_date: str, max_results: int, batch_size: int, log=print
+    after_date: str,
+    before_date: str,
+    max_results: int,
+    batch_size: int,
+    log=print,
+    *,
+    refresh: bool = False,
 ) -> None:
     """
     Use cached email-scraped release metadata for previously seen dates.
-    Only hit email provider for dates in the requested range that have no cache entry.
+    Only hit email provider for dates in the requested range that have no
+    ledger record for the active provider — the ledger is the sole authority
+    for "checked" (LOG-2), and days recorded by a different provider are
+    re-queried rather than trusted (LOG-22).
+
+    ``refresh=True`` (LOG-3 / UX-12 / UXP-11 backend) forces a re-check: the
+    selected days' ledger records are cleared first, so the whole range is
+    re-queried even if fully checked. Merge is additive by canonical URL, so
+    a refresh never duplicates rows and never touches stars/seen/embeds; a
+    refreshed range that comes back empty is recorded empty-again.
 
     Progress is reported through a :class:`ProgressEmitter` (pass one as
     ``log``, or any plain callable for text-only output). The emitter also
@@ -260,18 +277,34 @@ def populate_release_cache(
     if start_date > end_date:
         raise ValueError("Start date must be on or before end date")
 
-    cached_releases, missing_dates = cached_releases_for_range(start_date, end_date)
+    # The active provider tags everything this run records: each release row
+    # and each ledger day carries source = "gmail" | "imap" (LOG-21/LOG-22
+    # schema half). Set here at the pipeline level, never in the provider
+    # adapters. It is also consulted on read: days another provider recorded
+    # are offered for re-check (LOG-22 switch-behavior half).
+    provider_type = get_current_provider_type()
+    provider_name = "IMAP" if provider_type == "imap" else "Gmail"
+
+    if refresh:
+        emit(
+            f"Checking {after_date} to {before_date} again — existing releases, "
+            "stars, and history are kept.",
+            phase="query",
+        )
+        day = start_date
+        days_to_clear = []
+        while day <= end_date:
+            days_to_clear.append(day)
+            day += datetime.timedelta(days=1)
+        mark_dates_not_scraped(days_to_clear)
+
+    cached_releases, missing_dates = cached_releases_for_range(
+        start_date, end_date, provider=provider_type
+    )
     missing_ranges: list[tuple[datetime.date, datetime.date]] = list(
         collapse_date_ranges(missing_dates)
     )
     releases = list(cached_releases)
-
-    # The active provider tags everything this run records: each release row
-    # and each ledger day carries source = "gmail" | "imap" (LOG-21/LOG-22
-    # schema half — the switch-behavior half is WP-15's). Set here at the
-    # pipeline level, never in the provider adapters.
-    provider_type = get_current_provider_type()
-    provider_name = "IMAP" if provider_type == "imap" else "Gmail"
 
     if missing_ranges:
         emit(
@@ -303,8 +336,19 @@ def populate_release_cache(
         provider.authenticate()
 
         for range_index, (start_missing, end_missing) in enumerate(missing_ranges, start=1):
-            query_after = start_missing.strftime("%Y-%m-%d")
-            query_before = (end_missing + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+            # LOG-12 query pad: re-check scans (explicit refresh, or the
+            # automatic re-query of settling-window days) widen the QUERY
+            # bounds by one day each side to absorb provider-account-timezone
+            # skew at range edges — a boundary-hour email can sit on the
+            # neighboring day in the account's timezone. Merge is by canonical
+            # URL, so over-fetch is harmless; the pad affects query bounds
+            # only, never which days get recorded checked (``mark_within``
+            # below). First-time scans keep the exact end-inclusive bounds.
+            padded = refresh or start_missing >= first_settling_date()
+            query_start = start_missing - datetime.timedelta(days=1) if padded else start_missing
+            query_end_exclusive = end_missing + datetime.timedelta(days=2 if padded else 1)
+            query_after = query_start.strftime("%Y-%m-%d")
+            query_before = query_end_exclusive.strftime("%Y-%m-%d")
             emit("")
             emit(
                 f"Querying {provider_name} for {query_after} to {query_before}...",
@@ -430,6 +474,10 @@ def populate_release_cache(
                 [release for release in deduped_so_far if release.get("url") in new_urls],
                 exclude_today=True,
                 source=provider_type,
+                # Padded queries may return rows bucketed just outside the
+                # missing range; they are cached but their days stay unmarked
+                # (only partially covered by the pad — LOG-12).
+                mark_within=(start_missing, end_missing),
             )
             # Mark the entire queried span as checked so we do not re-fetch it.
             # This must stay the LAST step of each range. Days in the span that

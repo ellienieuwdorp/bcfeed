@@ -10,6 +10,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
 
 
 @dataclass
@@ -17,7 +18,7 @@ class EmailMessage:
     """Normalized email message structure returned by providers."""
 
     html: str  # HTML body content (decoded)
-    date: str  # YYYY-MM-DD format
+    date: str  # YYYY-MM-DD, the message's LOCAL calendar date (LOG-12)
     subject: str  # Email subject line
 
 
@@ -53,6 +54,37 @@ class EmailProvider(ABC):
     - Fetching full message content
     - Cleanup on close
     """
+
+    @staticmethod
+    def local_date_from_header(date_header: str) -> str:
+        """Bucket an email onto the user's LOCAL calendar date (LOG-12).
+
+        The one shared day-bucketing rule for every provider: parse the RFC
+        2822 ``Date:`` header and convert it to the machine-local timezone
+        before taking the date, so a message sent ``23:30:00 -0800`` lands on
+        the same day the calendar (and the exclude-today/settling-window
+        logic, which use the local ``util.today()``) agree on — identically
+        through Gmail and IMAP.
+
+        Returns ``YYYY-MM-DD``, or ``""`` when the header is missing or
+        unparseable (the pipeline counts such messages as one skip each,
+        LOG-24).
+        """
+        if not date_header:
+            return ""
+        try:
+            parsed = parsedate_to_datetime(date_header)
+        except Exception:
+            return ""
+        if parsed is None:
+            return ""
+        try:
+            # Aware datetimes convert to local time; a naive one (e.g. an
+            # RFC 2822 "-0000" unknown-zone offset) is assumed local as-is.
+            parsed = parsed.astimezone()
+        except (OSError, OverflowError, ValueError):
+            pass
+        return parsed.strftime("%Y-%m-%d")
 
     @abstractmethod
     def authenticate(self) -> None:

@@ -288,7 +288,9 @@ def test_gmail_batch_callback_pairing_without_private_responses():
     for msg_id in ids:
         assert emails[msg_id]["subject"] == f"New release from Page {msg_id}"
         assert msg_id in emails[msg_id]["html"]
-        assert emails[msg_id]["date"] == "2025-06-16"
+        # Updated by WP-15 (LOG-12): the transport hands the RAW Date header
+        # through; local-date bucketing is the provider adapter's job.
+        assert emails[msg_id]["date"] == "Mon, 16 Jun 2025 14:30:00 +0000"
     assert service.batches_executed == 3  # ceil(5/2)
 
     # Acceptance grep: no private-attribute access anywhere in the client.

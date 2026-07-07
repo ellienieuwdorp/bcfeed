@@ -191,7 +191,10 @@ def test_persist_before_mark_contract_no_scraped_without_cache(frozen_today, mak
         assert day_hits, f"{day} marked scraped but has no cached releases"
 
 
-def test_persist_excludes_today_by_default(freeze_today, make_release):
+def test_persist_keeps_todays_rows_but_never_marks_today(freeze_today, make_release):
+    # Updated by WP-15 (LOG-2): the exclude-today skip is LEDGER-only now.
+    # Today's fetched releases are persisted (data is never dropped); the day
+    # simply is never recorded checked, so it stays re-queryable.
     import session_store
 
     today = freeze_today(datetime.date(2025, 6, 20))
@@ -199,7 +202,7 @@ def test_persist_excludes_today_by_default(freeze_today, make_release):
     session_store.persist_release_metadata([rel])
 
     cached, _ = session_store.cached_releases_for_range(today, today)
-    assert cached == [], "today's release must not be cached under exclude_today"
+    assert [r["date"] for r in cached] == [today.isoformat()]
     status = session_store.scrape_status_for_range(today, today)
     assert status[today.isoformat()] is False
 
@@ -266,14 +269,19 @@ def test_mark_date_range_scraped_roundtrip(frozen_today):
     }
 
 
-def test_mark_dates_scraped_excludes_today(freeze_today):
+def test_mark_dates_scraped_excludes_today_and_settling_window(freeze_today):
+    # Updated by WP-15 (LOG-2): "never mark today" generalized to the trailing
+    # settling window — yesterday is inside it now, so the first markable day
+    # is today - SETTLING_WINDOW_DAYS.
     import session_store
 
     today = freeze_today(datetime.date(2025, 6, 20))
+    settled = today - datetime.timedelta(days=session_store.SETTLING_WINDOW_DAYS)
     yesterday = today - datetime.timedelta(days=1)
-    session_store.mark_dates_scraped([yesterday, today])  # exclude_today default True
-    status = session_store.scrape_status_for_range(yesterday, today)
-    assert status[yesterday.isoformat()] is True
+    session_store.mark_dates_scraped([settled, yesterday, today])  # exclude_today default True
+    status = session_store.scrape_status_for_range(settled, today)
+    assert status[settled.isoformat()] is True
+    assert status[yesterday.isoformat()] is False, "settling-window days are never recorded"
     assert status[today.isoformat()] is False
 
 
