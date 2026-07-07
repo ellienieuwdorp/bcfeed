@@ -158,9 +158,7 @@ def test_second_start_performs_no_migration(migrations_mod, data_dir, frozen_tod
     first = migrations_mod.migrate()
     assert first, "the first start over legacy stores must migrate"
 
-    snapshot = {
-        p.name: p.read_bytes() for p in data_dir.iterdir() if p.is_file()
-    }
+    snapshot = {p.name: p.read_bytes() for p in data_dir.iterdir() if p.is_file()}
     second = migrations_mod.migrate()
     assert second == [], "the second start must perform NO migration"
     after = {p.name: p.read_bytes() for p in data_dir.iterdir() if p.is_file()}
@@ -244,9 +242,7 @@ def test_migration_round_trip_collision_merge_star_preserved(
     assert "embed_url" not in record
 
 
-def test_null_url_rows_dropped_and_img_url_keys_stripped(
-    migrations_mod, data_dir, frozen_today
-):
+def test_null_url_rows_dropped_and_img_url_keys_stripped(migrations_mod, data_dir, frozen_today):
     import paths
 
     _seed_legacy_stores(data_dir)
@@ -399,9 +395,7 @@ def _install_provider(monkeypatch, provider, provider_type: str) -> None:
 
 
 @pytest.mark.parametrize("provider_type", ["gmail", "imap"])
-def test_every_ledger_day_records_its_producing_provider(
-    frozen_today, monkeypatch, provider_type
-):
+def test_every_ledger_day_records_its_producing_provider(frozen_today, monkeypatch, provider_type):
     import paths
     import pipeline
 

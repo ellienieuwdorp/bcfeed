@@ -156,9 +156,7 @@ def _migrate_release_cache(source: str) -> dict:
 def _migrate_url_set(path) -> None:
     raw = json_store.read_json(path, [])
     items = raw if isinstance(raw, list) else []
-    canonical = sorted(
-        {url for url in (canonical_release_url(item) for item in items) if url}
-    )
+    canonical = sorted({url for url in (canonical_release_url(item) for item in items) if url})
     if canonical != items:
         _backup(path)
         json_store.write_json(path, canonical)
