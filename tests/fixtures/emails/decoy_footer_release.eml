@@ -1,0 +1,16 @@
+From: Bandcamp <noreply@bandcamp.com>
+To: listener@example.com
+Subject: New release from Midnight Tapes
+Date: Sun, 22 Jun 2025 09:00:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="synthetic-boundary-11"
+
+--synthetic-boundary-11
+Content-Type: text/plain; charset="utf-8"
+
+Greetings friend, Midnight Tapes just released Neon Fields by Aria Vale, check it out here: https://midnighttapes.bandcamp.com/album/neon-fields
+--synthetic-boundary-11
+Content-Type: text/html; charset="utf-8"
+
+<html><body><div class="banner"><a href="https://daily.bandcamp.com/album/best-of-june-roundup">Album of the day: our best-of-June roundup</a></div><p>Greetings friend, <b>Midnight Tapes</b> just released <i>Neon Fields</i> by Aria Vale, check it out here: <a href="https://midnighttapes.bandcamp.com/album/neon-fields?from=email#listen">listen</a></p><p><a href="https://midnighttapes.bandcamp.com/album/neon-fields"><img src="cid:artwork" alt="Neon Fields artwork"></a></p><div class="footer"><a href="https://bandcamp.com/discover">discover more music</a> &middot; <a href="https://twitter.com/bandcamp">Twitter</a> &middot; <a href="https://bandcamp.com/settings/notifications?unsubscribe=1">unsubscribe</a></div></body></html>
+--synthetic-boundary-11--

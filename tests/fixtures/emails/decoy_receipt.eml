@@ -1,0 +1,16 @@
+From: Bandcamp <noreply@bandcamp.com>
+To: listener@example.com
+Subject: Your Bandcamp receipt
+Date: Sat, 21 Jun 2025 12:00:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="synthetic-boundary-07"
+
+--synthetic-boundary-07
+Content-Type: text/plain; charset="utf-8"
+
+Thank you for your order! You bought Neon Fields by Aria Vale. Download it here: https://midnighttapes.bandcamp.com/album/neon-fields
+--synthetic-boundary-07
+Content-Type: text/html; charset="utf-8"
+
+<html><body><p>Thank you for your order!</p><p>You bought <i>Neon Fields</i> by Aria Vale for $7 USD.</p><p><a href="https://midnighttapes.bandcamp.com/album/neon-fields">Download your purchase</a></p><p>Order #123456 &middot; paid with card ending 0000</p></body></html>
+--synthetic-boundary-07--

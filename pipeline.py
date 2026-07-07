@@ -135,7 +135,10 @@ def _provider_fetch_log(emit: ProgressEmitter):
         text = str(text)
         if text.startswith("Downloading messages"):
             return
-        level = "warn" if text.lower().startswith("warning") else "info"
+        lowered = text.lower()
+        # Rate-limit retry lines (WP-16/LOG-17) are visible as warnings so the
+        # user can see the run is backing off, not stuck.
+        level = "warn" if lowered.startswith("warning") or "retrying" in lowered else "info"
         emit(text, phase="download", level=level)
 
     return forward
@@ -326,8 +329,26 @@ def populate_release_cache(
                     current=range_index,
                     total=total_ranges,
                 )
-                persist_empty_date_range(start_missing, end_missing, exclude_today=True)
-                emit.days_scraped += _countable_days(start_missing, end_missing)
+                # LOG-23/PY-17 gate: a zero-result search may only write
+                # empty-day ledger records when the provider corroborates it.
+                # IMAP search is folder-scoped — a mis-selected folder returns
+                # nothing and would otherwise poison the ledger with
+                # checked-and-empty days that are never re-queried. Gmail has
+                # no such hook (its search is account-global, no wrong-folder
+                # failure mode), so its empty results stay trusted as before.
+                trusted = True
+                corroborate = getattr(provider, "corroborate_empty_result", None)
+                if corroborate is not None:
+                    trusted, diagnostic = corroborate(search_query)
+                    if diagnostic:
+                        emit(
+                            diagnostic,
+                            phase="query",
+                            level="info" if trusted else "warn",
+                        )
+                if trusted:
+                    persist_empty_date_range(start_missing, end_missing, exclude_today=True)
+                    emit.days_scraped += _countable_days(start_missing, end_missing)
                 continue
             total_messages = len(message_ids)
             emit(

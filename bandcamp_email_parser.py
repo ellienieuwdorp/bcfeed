@@ -1,9 +1,59 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 
 from bs4 import BeautifulSoup
 from furl import furl
+
+# ---------------------------------------------------------------------------
+# Stage-1 subject classification (LOG-14): a quoted-OR list of known
+# release-notification subject forms, not a single English startswith. The
+# non-English entries are the locale variants exercised by the synthetic
+# fixture matrix; extend this tuple as real localized samples are collected.
+# Matching is a case-folded substring test so artist-first word orders
+# (e.g. the Japanese form) match too.
+RELEASE_SUBJECT_PHRASES = (
+    "new release from",  # en
+    "neue veröffentlichung von",  # de
+    "nueva publicación de",  # es
+    "nouvelle sortie de",  # fr
+    "novo lançamento de",  # pt
+    "の新作リリース",  # ja (artist-first)
+)
+
+# Reply/forward prefixes reject a subject outright, even when it quotes a
+# release phrase ("Re: New release from …" is somebody's reply, not a
+# notification).
+_REPLY_PREFIXES = ("re:", "fwd:", "fw:", "aw:", "tr:", "sv:")
+
+# Other noreply@bandcamp.com mail (receipts, digests, recommendations) also
+# carries /album/ links, so the sender alone can never be the filter — these
+# subject markers reject before the link stage runs.
+_NON_RELEASE_SUBJECT_MARKERS = (
+    "receipt",
+    "your order",
+    "order confirmation",
+    "digest",
+    "you might like",
+    "recommended for you",
+)
+
+
+def _subject_is_release_notification(subject_text: str) -> bool:
+    """Stage 1 of the two-stage match (LOG-14): classify the subject line.
+
+    Accepts any known release-notification subject form (quoted-OR across
+    locales); rejects replies/forwards and known non-release Bandcamp mail
+    (receipts, digests, recommendations). Rejects surface as counted skips in
+    the pipeline — never junk rows, never an aborted run.
+    """
+    lowered = subject_text.casefold()
+    if any(lowered.startswith(prefix) for prefix in _REPLY_PREFIXES):
+        return False
+    if any(marker in lowered for marker in _NON_RELEASE_SUBJECT_MARKERS):
+        return False
+    return any(phrase.casefold() in lowered for phrase in RELEASE_SUBJECT_PHRASES)
 
 
 def parse_release_email(email_html: str | bytes | None, subject: str | None = None):
@@ -33,23 +83,44 @@ def parse_release_email(email_html: str | bytes | None, subject: str | None = No
         return None, None, None, None, None, None
 
     subject_text = (subject or "").strip()
-    # Only accept messages whose subject starts with the expected release prefix.
-    # If we can't read the subject, treat it as non-release to avoid misclassifying
-    # other Bandcamp emails (orders, merch, etc.).
-    if not subject_text or not subject_text.lower().startswith("new release from"):
+    # Stage 1 (LOG-14): classify the subject. If we can't read the subject,
+    # treat it as non-release to avoid misclassifying other Bandcamp emails
+    # (orders, merch, digests, etc.).
+    if not subject_text or not _subject_is_release_notification(subject_text):
         return None, None, None, None, None, None
 
     soup = BeautifulSoup(s, "html.parser")
 
     def _find_bandcamp_release_url() -> str | None:
+        """Stage 2 (LOG-14/LOG-15): pick the genuine release link.
+
+        Collects every candidate release link (a path containing /album/ or
+        /track/ — custom artist domains stay supported), then chooses by
+        structure instead of first-anchor-wins: real notifications repeat the
+        release link (artwork, title, button) while footer/marketing decoys
+        ("discover more", digest items) appear once — most-frequent wins, an
+        anchor wrapping the artwork <img> breaks ties, then document order.
+        """
+        candidates: list[str] = []
+        wraps_image: set[str] = set()
         for a in soup.find_all("a", href=True):
-            href = a["href"]
-            parsed = furl(href)
+            parsed = furl(a["href"])
             path = str(parsed.path).lower()
-            # Accept custom domains as long as the path looks like a release page.
-            if "/album/" in path or "/track/" in path:
-                return parsed.remove(args=True, fragment=True).url
-        return None
+            if "/album/" not in path and "/track/" not in path:
+                continue
+            url = parsed.remove(args=True, fragment=True).url
+            candidates.append(url)
+            if a.find("img") is not None:
+                wraps_image.add(url)
+        if not candidates:
+            return None
+
+        counts = Counter(candidates)
+
+        def _rank(url: str) -> tuple:
+            return (counts[url], url in wraps_image, -candidates.index(url))
+
+        return max(dict.fromkeys(candidates), key=_rank)
 
     release_url = _find_bandcamp_release_url()
     if release_url is None:

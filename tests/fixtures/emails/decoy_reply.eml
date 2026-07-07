@@ -1,0 +1,16 @@
+From: Friend <friend@example.com>
+To: listener@example.com
+Subject: Re: New release from Midnight Tapes
+Date: Sat, 21 Jun 2025 13:30:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="synthetic-boundary-08"
+
+--synthetic-boundary-08
+Content-Type: text/plain; charset="utf-8"
+
+Have you heard this yet? > Greetings friend, Midnight Tapes just released Neon Fields by Aria Vale, check it out here: https://midnighttapes.bandcamp.com/album/neon-fields
+--synthetic-boundary-08
+Content-Type: text/html; charset="utf-8"
+
+<html><body><p>Have you heard this yet?</p><blockquote><p>Greetings friend, <b>Midnight Tapes</b> just released <i>Neon Fields</i> by Aria Vale, check it out here: <a href="https://midnighttapes.bandcamp.com/album/neon-fields">listen</a></p></blockquote></body></html>
+--synthetic-boundary-08--

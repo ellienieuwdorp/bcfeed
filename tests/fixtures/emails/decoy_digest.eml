@@ -1,0 +1,16 @@
+From: Bandcamp <noreply@bandcamp.com>
+To: listener@example.com
+Subject: Your Bandcamp fan digest
+Date: Sat, 21 Jun 2025 15:45:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="synthetic-boundary-09"
+
+--synthetic-boundary-09
+Content-Type: text/plain; charset="utf-8"
+
+This week from artists you follow: Neon Fields https://midnighttapes.bandcamp.com/album/neon-fields and Glass Corridor https://echoparade.bandcamp.com/track/glass-corridor
+--synthetic-boundary-09
+Content-Type: text/html; charset="utf-8"
+
+<html><body><p>This week from artists you follow:</p><ul><li><a href="https://midnighttapes.bandcamp.com/album/neon-fields"><i>Neon Fields</i></a> by Aria Vale</li><li><a href="https://echoparade.bandcamp.com/track/glass-corridor"><i>Glass Corridor</i></a> by Echo Parade</li></ul></body></html>
+--synthetic-boundary-09--

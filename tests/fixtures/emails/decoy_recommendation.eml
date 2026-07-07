@@ -1,0 +1,16 @@
+From: Bandcamp <noreply@bandcamp.com>
+To: listener@example.com
+Subject: You might like Neon Fields by Aria Vale
+Date: Sat, 21 Jun 2025 17:10:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="synthetic-boundary-10"
+
+--synthetic-boundary-10
+Content-Type: text/plain; charset="utf-8"
+
+Because you bought Paper Suns, we think you might like Neon Fields: https://midnighttapes.bandcamp.com/album/neon-fields
+--synthetic-boundary-10
+Content-Type: text/html; charset="utf-8"
+
+<html><body><p>Because you bought <i>Paper Suns</i>, we think you might like <i>Neon Fields</i> by Aria Vale.</p><p><a href="https://midnighttapes.bandcamp.com/album/neon-fields">Check it out</a></p></body></html>
+--synthetic-boundary-10--

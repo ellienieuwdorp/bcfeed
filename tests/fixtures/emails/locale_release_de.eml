@@ -1,0 +1,18 @@
+From: Bandcamp <noreply@bandcamp.com>
+To: listener@example.com
+Subject: =?utf-8?q?Neue_Ver=C3=B6ffentlichung_von_Nachtfarben?=
+Date: Sat, 21 Jun 2025 10:20:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="synthetic-boundary-06"
+
+--synthetic-boundary-06
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+Hallo Freund, Nachtfarben hat gerade Stille Signale veröffentlicht, hör mal rein: https://nachtfarben.bandcamp.com/album/stille-signale
+--synthetic-boundary-06
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+<html><body><p>Hallo Freund, <b>Nachtfarben</b> hat gerade <i>Stille Signale</i> veröffentlicht, hör mal rein: <a href="https://nachtfarben.bandcamp.com/album/stille-signale">anhören</a></p></body></html>
+--synthetic-boundary-06--

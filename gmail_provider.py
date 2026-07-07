@@ -29,6 +29,13 @@ class GmailProvider(EmailProvider):
 
     This wraps the existing gmail.py functionality to provide a consistent
     interface with the IMAP provider.
+
+    LOG-23 asymmetry (deliberate): this provider has NO
+    ``corroborate_empty_result`` method. Gmail search is account-global —
+    there is no folder selection that could silently scope a search to the
+    wrong mailbox — so a zero-result search needs no folder corroboration
+    before the pipeline records the range as checked-and-empty. The IMAP
+    provider, whose search is folder-scoped, implements that hook.
     """
 
     def __init__(self):
@@ -77,10 +84,15 @@ class GmailProvider(EmailProvider):
         gmail_query = self._build_gmail_query(query)
 
         try:
-            messages = search_messages(self._service, gmail_query)
-            # Extract just the IDs and limit results
+            # Pagination stops early once the cap is exceeded (LOG-16/PERF-7).
+            messages = search_messages(self._service, gmail_query, max_results=max_results)
             ids = [m["id"] for m in messages]
-            return ids[:max_results]
+            if max_results:
+                # Return at most cap+1 ids: enough for the pipeline to detect
+                # an over-cap search (MaxResultsExceeded) without paging or
+                # downloading the rest of the result set.
+                return ids[: max_results + 1]
+            return ids
         except GmailAuthError as e:
             raise AuthenticationError(str(e))
         except Exception as e:
@@ -94,7 +106,9 @@ class GmailProvider(EmailProvider):
             parts.append(f"from:{query.sender}")
 
         if query.subject_contains:
-            parts.append(f"subject:{query.subject_contains}")
+            # Quote the phrase so Gmail matches all of it against the subject;
+            # unquoted, only the first word binds to subject: (LOG-14).
+            parts.append(f'subject:"{query.subject_contains}"')
 
         if query.after_date:
             # Gmail uses YYYY/MM/DD format
@@ -129,7 +143,8 @@ class GmailProvider(EmailProvider):
             return {}
 
         try:
-            # get_messages returns dict with string keys and dict values
+            # get_messages pairs responses to message ids via the batch
+            # callback API, so its keys ARE the Gmail message ids (CQ-19).
             raw_messages = get_messages(
                 self._service,
                 message_ids,
@@ -140,12 +155,8 @@ class GmailProvider(EmailProvider):
 
             # Convert to EmailMessage format
             results = {}
-            for idx, msg_data in raw_messages.items():
-                # Map back to original message ID
-                # Note: get_messages returns indices as keys, so we need to look up
-                original_id = message_ids[int(idx)] if idx.isdigit() else idx
-
-                results[original_id] = EmailMessage(
+            for msg_id, msg_data in raw_messages.items():
+                results[msg_id] = EmailMessage(
                     html=msg_data.get("html", ""),
                     date=msg_data.get("date", ""),
                     subject=msg_data.get("subject", ""),

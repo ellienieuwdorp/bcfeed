@@ -14,6 +14,12 @@ from dataclasses import dataclass
 
 from email_provider import AuthenticationError, ProviderError
 
+# Socket timeout for the IMAP connection. Applies to every operation on the
+# connection (login/select/search/fetch), so a hung server costs one bounded
+# wait instead of a frozen run — the IMAP twin of the Gmail batch-robustness
+# work (LOG-17/CQ-71).
+IMAP_TIMEOUT_SECONDS = 30.0
+
 
 @dataclass
 class ImapConfig:
@@ -63,11 +69,13 @@ class ImapClient:
                     self.config.host,
                     self.config.port,
                     ssl_context=context,
+                    timeout=IMAP_TIMEOUT_SECONDS,
                 )
             else:
                 self._connection = imaplib.IMAP4(
                     self.config.host,
                     self.config.port,
+                    timeout=IMAP_TIMEOUT_SECONDS,
                 )
 
             self._connection.login(

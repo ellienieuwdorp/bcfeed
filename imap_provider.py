@@ -74,8 +74,58 @@ class ImapProvider(EmailProvider):
         # IMAP returns oldest first; reverse for newest first
         message_ids.reverse()
 
-        # Apply max_results limit
-        return message_ids[:max_results]
+        if max_results:
+            # Cap the UID set BEFORE any bodies are fetched (LOG-16 IMAP twin):
+            # return at most cap+1 UIDs so the pipeline can detect an over-cap
+            # search (MaxResultsExceeded) without downloading the overflow.
+            return message_ids[: max_results + 1]
+        return message_ids
+
+    def corroborate_empty_result(self, query: SearchQuery) -> tuple[bool, str | None]:
+        """Folder corroboration for a zero-result range search (LOG-23/PY-17).
+
+        IMAP search is folder-scoped and server-dependent: a mis-selected
+        folder (or a weak server SEARCH) returns nothing, and blindly
+        recording those days as checked-and-empty would poison the ledger
+        under the never-re-check model. Before trusting an empty result, ask
+        whether the selected folder contains *any* mail from the expected
+        sender at all.
+
+        Returns ``(trusted, diagnostic)``:
+        - ``trusted`` — True when the empty result is corroborated (the folder
+          demonstrably receives the sender's mail), False when empty-day
+          records must NOT be written.
+        - ``diagnostic`` — run-summary line describing what was searched.
+
+        Gmail deliberately has no equivalent hook: its search is
+        account-global, so there is no wrong-folder failure mode (CQ-71 note
+        in gmail_provider.py).
+        """
+        sender = query.sender
+        folder = self.config.folder or "(none)"
+        if not sender:
+            return True, None
+
+        try:
+            sender_uids = self._client.uid_search(["FROM", f'"{sender}"'])
+        except Exception as exc:
+            # Fail safe: if corroboration itself fails, do not record empty days.
+            return False, (
+                f'Could not verify folder "{folder}" ({exc}). '
+                "These dates were left unrecorded so they can be checked again."
+            )
+
+        matched = len(sender_uids)
+        if matched == 0:
+            return False, (
+                f'Searched folder "{folder}" — found 0 Bandcamp messages (from {sender}) '
+                "in it. These dates were left unrecorded so they can be checked again — "
+                "is this the right folder?"
+            )
+        return True, (
+            f'Searched folder "{folder}" — matched 0 of {matched} messages '
+            f"from {sender} for these dates."
+        )
 
     def _build_search_criteria(self, query: SearchQuery) -> list[str]:
         """
@@ -149,6 +199,7 @@ class ImapProvider(EmailProvider):
             return {}
 
         results = {}
+        skipped = 0
         total = len(message_ids)
 
         for i, msg_id in enumerate(message_ids):
@@ -156,13 +207,24 @@ class ImapProvider(EmailProvider):
                 end = min(i + batch_size, total)
                 log(f"Downloading messages {i} to {end}")
 
+            # One bad message is a counted skip, never a lost batch — the
+            # IMAP twin of the Gmail per-message 404 handling (LOG-17/CQ-71).
             try:
                 email_msg = self._fetch_single(msg_id)
-                if email_msg:
-                    results[msg_id] = email_msg
             except Exception as e:
+                skipped += 1
                 if log:
-                    log(f"Warning: Failed to fetch message {msg_id}: {e}")
+                    log(f"Warning: skipped message {msg_id}: {e}")
+                continue
+            if email_msg is None:
+                skipped += 1
+                if log:
+                    log(f"Warning: skipped message {msg_id}: no content returned.")
+                continue
+            results[msg_id] = email_msg
+
+        if skipped and log:
+            log(f"Skipped {skipped} message(s) that could not be downloaded.")
 
         return results
 

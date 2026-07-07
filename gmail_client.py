@@ -2,6 +2,7 @@ import base64
 import json
 import pickle
 import sys
+import time
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
@@ -263,18 +264,35 @@ def gmail_authenticate():
 
 
 # ------------------------------------------------------------------------
-def search_messages(service, query):
+# Gmail's messages().list caps page size at 500 (LOG-16/PERF-7).
+GMAIL_PAGE_SIZE = 500
+
+
+def search_messages(service, query, max_results=None):
+    """List message ids matching ``query``, stopping pagination early.
+
+    ``max_results`` is the caller's cap: listing stops as soon as more than
+    ``max_results`` ids have been collected (cap+1 is enough for the caller to
+    detect an over-cap search), instead of paging the entire result set and
+    discarding the tail (LOG-16/PERF-7). ``maxResults`` is passed through to
+    the list call so no page fetches more ids than needed.
+    """
+    page_size = GMAIL_PAGE_SIZE if not max_results else min(GMAIL_PAGE_SIZE, max_results + 1)
     try:
-        result = service.users().messages().list(userId="me", q=query).execute()
+        result = (
+            service.users().messages().list(userId="me", q=query, maxResults=page_size).execute()
+        )
         messages = []
         if "messages" in result:
             messages.extend(result["messages"])
         while "nextPageToken" in result:
+            if max_results and len(messages) > max_results:
+                break  # early stop: the caller only needs to know the cap is exceeded
             page_token = result["nextPageToken"]
             result = (
                 service.users()
                 .messages()
-                .list(userId="me", q=query, pageToken=page_token)
+                .list(userId="me", q=query, pageToken=page_token, maxResults=page_size)
                 .execute()
             )
             if "messages" in result:
@@ -296,54 +314,146 @@ def search_messages(service, query):
 
 
 # ------------------------------------------------------------------------
-def get_messages(service, ids, format, batch_size, log=print):
-    idx = 0
-    emails = {}
+# Bounded exponential backoff for rate-limited batches (CQ-19/LOG-17/PY-9).
+BATCH_RETRY_LIMIT = 3  # retries after the first attempt (4 attempts total)
+BACKOFF_BASE_SECONDS = 1.0
+_RETRYABLE_STATUSES = {429, 500, 502, 503}
 
-    while idx < len(ids):
-        if log:
-            log(f"Downloading messages {idx} to {min(idx + batch_size, len(ids))}")
+
+def _backoff_sleep(seconds):
+    """Module-level seam so tests can substitute a fake clock."""
+    time.sleep(seconds)
+
+
+def _http_status(exc):
+    """Best-effort HTTP status from an HttpError (or lookalike)."""
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        resp = getattr(exc, "resp", None)
+        status = getattr(resp, "status", None)
+    try:
+        return int(status) if status is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _download_batch(service, msg_ids, format, log):
+    """Download one batch of messages via the batch *callback* API.
+
+    Responses are paired to their message ids through the callback's
+    ``request_id`` — never through private BatchHttpRequest internals
+    (CQ-19/PY-9). Retryable statuses (429/5xx) retry the failed subset with
+    bounded exponential backoff; a per-message 404 is a counted skip, not a
+    run abort (LOG-17).
+
+    Returns ``(responses, skipped)``: parsed message dicts keyed by message
+    id (in request order), and the count of permanently-missing messages.
+    """
+    pending = list(msg_ids)
+    responses = {}
+    skipped = 0
+
+    for attempt in range(BATCH_RETRY_LIMIT + 1):
+        succeeded = {}
+        errors = {}
+
+        def _callback(request_id, response, exception, _ok=succeeded, _err=errors):
+            if exception is not None:
+                _err[request_id] = exception
+            else:
+                _ok[request_id] = response
+
         batch = service.new_batch_http_request()
-        for msg_id in ids[idx : idx + batch_size]:
-            batch.add(service.users().messages().get(userId="me", id=msg_id, format=format))
+        for msg_id in pending:
+            batch.add(
+                service.users().messages().get(userId="me", id=msg_id, format=format),
+                callback=_callback,
+                request_id=msg_id,
+            )
         batch.execute()
-        response_keys = [key for key in batch._responses]
+        responses.update(succeeded)
 
-        for key in response_keys:
-            email_data = json.loads(batch._responses[key][1])
-            if "error" in email_data:
-                err_msg = email_data["error"]["message"]
-                if email_data["error"]["code"] == 429:
-                    # Batch size is fixed at 20 (server.py); there is no CLI flag
-                    # to tune it. Tell the user the only true remedy (CQ-02/PY-9).
-                    raise Exception(
-                        f"{err_msg} Gmail rate limit reached — wait a minute and try again."
-                    )
-                elif email_data["error"]["code"] == 401:
-                    _clear_token()
-                    raise GmailAuthError("Gmail access revoked; please reauthorize.")
-                else:
-                    raise Exception(err_msg)
-            email = get_html_from_message(email_data)
+        retry_ids = []
+        for msg_id, exc in errors.items():
+            status = _http_status(exc)
+            if status == 404:
+                # This message no longer exists: one counted skip, never a
+                # lost batch (LOG-17 acceptance).
+                skipped += 1
+                if log:
+                    log("Warning: skipped one message that could not be found (404).")
+            elif status == 401:
+                _clear_token()
+                raise GmailAuthError("Gmail access revoked; please reauthorize.")
+            elif status in _RETRYABLE_STATUSES:
+                retry_ids.append(msg_id)
+            elif isinstance(exc, Exception):
+                raise exc
+            else:
+                raise Exception(str(exc))
 
-            # Extract headers if available
-            headers = email_data.get("payload", {}).get("headers", [])
-            date_header = None
-            subject_header = None
-            for h in headers:
-                name = h.get("name", "").lower()
-                if name == "date":
-                    date_header = h.get("value")
-                if name == "subject":
-                    subject_header = h.get("value")
-            parsed_date = None
-            if date_header:
-                try:
-                    parsed_date = parsedate_to_datetime(date_header).strftime("%Y-%m-%d")
-                except Exception:
-                    parsed_date = date_header
+        if not retry_ids:
+            return responses, skipped
+        if attempt == BATCH_RETRY_LIMIT:
+            raise Exception(
+                f"Gmail is still rate-limiting after {BATCH_RETRY_LIMIT} retries — "
+                "wait a minute and try again."
+            )
+        delay = BACKOFF_BASE_SECONDS * (2**attempt)
+        if log:
+            log(
+                f"Gmail rate limit hit — retrying {len(retry_ids)} message(s) in "
+                f"{delay:g}s (attempt {attempt + 1} of {BATCH_RETRY_LIMIT})..."
+            )
+        _backoff_sleep(delay)
+        pending = retry_ids
 
-            emails[str(idx)] = {"html": email, "date": parsed_date, "subject": subject_header}
-            idx += 1
+    return responses, skipped  # pragma: no cover — loop always returns/raises
+
+
+def _message_entry(email_data):
+    """Build the ``{html, date, subject}`` entry for one downloaded message."""
+    html = get_html_from_message(email_data)
+
+    headers = email_data.get("payload", {}).get("headers", [])
+    date_header = None
+    subject_header = None
+    for h in headers:
+        name = h.get("name", "").lower()
+        if name == "date":
+            date_header = h.get("value")
+        if name == "subject":
+            subject_header = h.get("value")
+    parsed_date = None
+    if date_header:
+        try:
+            parsed_date = parsedate_to_datetime(date_header).strftime("%Y-%m-%d")
+        except Exception:
+            parsed_date = date_header
+
+    return {"html": html, "date": parsed_date, "subject": subject_header}
+
+
+def get_messages(service, ids, format, batch_size, log=print):
+    """Batch-download messages, keyed by their Gmail message id.
+
+    Uses the public batch callback API for response pairing, retries
+    rate-limited subsets with backoff, and counts permanently-missing
+    messages as skips (CQ-19/LOG-17/PY-9).
+    """
+    emails = {}
+    skipped = 0
+
+    for batch_start in range(0, len(ids), batch_size):
+        chunk = ids[batch_start : batch_start + batch_size]
+        if log:
+            log(f"Downloading messages {batch_start} to {min(batch_start + len(chunk), len(ids))}")
+        responses, chunk_skipped = _download_batch(service, chunk, format, log)
+        skipped += chunk_skipped
+        for msg_id, email_data in responses.items():
+            emails[msg_id] = _message_entry(email_data)
+
+    if skipped and log:
+        log(f"Skipped {skipped} message(s) that could not be downloaded.")
 
     return emails
