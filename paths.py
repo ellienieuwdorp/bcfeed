@@ -33,14 +33,15 @@ def get_data_dir() -> Path:
 # created lazily by get_data_dir()/writers. Tests set BCFEED_DATA_DIR before import.
 DATA_DIR = _resolve_base_dir()
 GMAIL_CREDENTIALS_FILE = "credentials.json"
-GMAIL_TOKEN_FILE = "token.pickle"
 VIEWED_PATH = DATA_DIR / "viewed_state.json"
 STARRED_PATH = DATA_DIR / "starred_state.json"
 RELEASE_CACHE_PATH = DATA_DIR / "release_cache.json"
 EMPTY_DATES_PATH = DATA_DIR / "no_results_dates.json"
 SCRAPE_STATUS_PATH = DATA_DIR / "scrape_status.json"
 EMBED_CACHE_PATH = DATA_DIR / "embed_cache.json"
-TOKEN_PATH = DATA_DIR / GMAIL_TOKEN_FILE
+# Legacy import source only (never written): a pre-keychain credentials.json
+# is migrated into the keychain on first use, then deleted. The legacy pickle
+# token constant is fully retired (WP-13 · SEC-10/CQ-70).
 CREDENTIALS_PATH = DATA_DIR / GMAIL_CREDENTIALS_FILE
 DASHBOARD_PATH = Path(__file__).resolve().with_name("dashboard.html")
 DASHBOARD_CSS_PATH = Path(__file__).resolve().with_name("dashboard.css")

@@ -51,7 +51,7 @@ You must keep the CLI process running in order to use **bcfeed**.
 
 Open **Settings → Email Configuration** after launching the app. **bcfeed** supports two provider types:
 
-- **Gmail API (OAuth)**: recommended if your Bandcamp mail lives in Gmail and you do not mind creating your own Google Cloud OAuth client.
+- **Gmail API (OAuth)**: recommended if your Bandcamp mail lives in Gmail and you do not mind creating your own Google Cloud OAuth client. Access is read-only: the app can only read messages, never send, modify, or delete them.
 - **IMAP**: works with many providers, including Gmail, iCloud, Outlook, Fastmail, and other IMAP-compatible mailboxes.
 
 Sensitive Gmail OAuth material, Gmail tokens, and IMAP passwords managed by **bcfeed** are stored in your system keychain. Non-secret provider settings are stored locally in the app data directory.

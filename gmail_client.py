@@ -1,6 +1,5 @@
 import base64
 import json
-import pickle
 import sys
 import time
 from email.utils import parsedate_to_datetime
@@ -29,25 +28,37 @@ from credential_store import (
 from credential_store import (
     has_gmail_client_config as has_stored_gmail_client_config,
 )
-from credential_store import (
-    has_gmail_token as has_stored_gmail_token,
-)
-from paths import CREDENTIALS_PATH, GMAIL_CREDENTIALS_FILE, TOKEN_PATH
+from paths import CREDENTIALS_PATH, DATA_DIR, GMAIL_CREDENTIALS_FILE
+
+# The ONLY Gmail scope bcfeed ever requests (ARC-5d/SEC-3): read-only. The app
+# only calls messages().list and messages().get, and the setup docs and
+# privacy page promise read-only access — nothing broader is needed.
+GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+
+# Retired legacy on-disk token store (SEC-10/CQ-70): the pickle migration path
+# is gone. This literal filename survives only so a stale file left by an old
+# install can be deleted — it is never read.
+_LEGACY_TOKEN_FILENAME = "token.pickle"
 
 
 class GmailAuthError(Exception):
     """Raised when Gmail OAuth credentials are missing, expired, or revoked."""
 
 
-def _clear_token() -> None:
-    """Remove saved token to force a new auth flow next run."""
+def _remove_stale_legacy_token_file() -> None:
+    """One-time cleanup: unlink (never read) a stale legacy token file."""
     try:
-        clear_stored_gmail_token()
+        legacy = DATA_DIR / _LEGACY_TOKEN_FILENAME
+        if legacy.exists():
+            legacy.unlink()
     except Exception:
         pass
+
+
+def _clear_token() -> None:
+    """Remove the saved authorization to force a new auth flow next run."""
     try:
-        if TOKEN_PATH.exists():
-            TOKEN_PATH.unlink()
+        clear_stored_gmail_token()
     except Exception:
         pass
 
@@ -77,10 +88,17 @@ def gmail_credentials_configured() -> bool:
 
 
 def gmail_token_available() -> bool:
+    """Whether a stored, read-only-scoped Gmail authorization exists.
+
+    Loading validates the stored scopes: a legacy full-access authorization
+    (pre read-only scope) is cleared by ``_load_stored_token`` so
+    ``/config.json`` reports ``has_token: false`` and the UI walks the user
+    through reconnecting (ARC-5d/SEC-3).
+    """
     try:
-        return has_stored_gmail_token() or TOKEN_PATH.exists()
-    except CredentialStoreError:
-        return TOKEN_PATH.exists()
+        return _load_stored_token() is not None
+    except (GmailAuthError, CredentialStoreError):
+        return False
 
 
 def clear_gmail_credentials(*, clear_client_config: bool = True) -> None:
@@ -98,15 +116,17 @@ def clear_gmail_credentials(*, clear_client_config: bool = True) -> None:
         except Exception as exc:
             errors.append(exc)
 
-    for path in (TOKEN_PATH, CREDENTIALS_PATH):
-        try:
-            if path.exists():
-                path.unlink()
-        except Exception as exc:
-            errors.append(exc)
+    _remove_stale_legacy_token_file()
+    try:
+        if CREDENTIALS_PATH.exists():
+            CREDENTIALS_PATH.unlink()
+    except Exception as exc:
+        errors.append(exc)
 
     if errors:
-        raise GmailAuthError(str(errors[0]))
+        # Generic message only — the underlying keychain/file detail must
+        # never reach a client body (SEC-9/CQ-70); callers log the chain.
+        raise GmailAuthError("Couldn't fully clear the stored Gmail credentials.") from errors[0]
 
 
 def _load_stored_token() -> Credentials | None:
@@ -117,44 +137,31 @@ def _load_stored_token() -> Credentials | None:
         payload = json.loads(token_json)
         if not isinstance(payload, dict):
             raise ValueError("Gmail token JSON must contain an object")
-        return Credentials.from_authorized_user_info(payload)
+        creds = Credentials.from_authorized_user_info(payload)
     except Exception as exc:
         _clear_token()
         raise GmailAuthError(
-            "Stored Gmail token is invalid. Reload credentials in the settings panel."
+            "The saved Gmail authorization is invalid. Reload credentials in the settings panel."
         ) from exc
+
+    # Any authorization not carrying exactly the read-only scope — which
+    # includes every legacy full-mailbox token, since those never held
+    # gmail.readonly — is invalidated so the reconnect flow issues a
+    # read-only one (ARC-5d/SEC-3).
+    if set(creds.scopes or []) != {GMAIL_SCOPE}:
+        _clear_token()
+        return None
+    return creds
 
 
 def _persist_token(creds: Credentials) -> None:
     try:
         save_gmail_token_json(creds.to_json())
     except (CredentialStoreError, ValueError) as exc:
-        raise GmailAuthError(str(exc)) from exc
-    try:
-        if TOKEN_PATH.exists():
-            TOKEN_PATH.unlink()
-    except Exception:
-        pass
-
-
-def _load_legacy_token() -> Credentials | None:
-    if not TOKEN_PATH.exists():
-        return None
-
-    try:
-        with open(TOKEN_PATH, "rb") as token:
-            creds = pickle.load(token)
-        _persist_token(creds)
-        try:
-            TOKEN_PATH.unlink()
-        except Exception:
-            pass
-        return creds
-    except GmailAuthError:
-        raise
-    except Exception as exc:
+        # Generic message only — keychain error text never reaches a client
+        # body (SEC-9/CQ-70); callers log the chained detail.
         raise GmailAuthError(
-            "Saved Gmail token is unreadable. Reload credentials in the settings panel."
+            "Couldn't save the Gmail connection to secure storage. See the server log for details."
         ) from exc
 
 
@@ -180,7 +187,10 @@ def _load_client_config() -> dict:
         raw_json = cred_file.read_text(encoding="utf-8")
         payload = save_gmail_client_config_json(raw_json)
     except (CredentialStoreError, ValueError) as exc:
-        raise GmailAuthError(str(exc)) from exc
+        raise GmailAuthError(
+            "Couldn't move the Gmail credentials file into secure storage. "
+            "See the server log for details."
+        ) from exc
     except Exception as exc:
         raise GmailAuthError(
             "Gmail credentials file could not be read. Reload it in the settings panel."
@@ -231,14 +241,18 @@ def get_html_from_message(msg):
 
 
 # ------------------------------------------------------------------------
-def gmail_authenticate():
-    SCOPES = [
-        "https://mail.google.com/"
-    ]  # Request all access (permission to read/send/receive emails, manage the inbox, and more)
+def gmail_authenticate(oauth_timeout_seconds: float | None = None):
+    """Return an authorized Gmail service, running the consent flow if needed.
 
-    creds = None
-    creds = _load_stored_token() or _load_legacy_token()
-    # if there are no (valid) credentials availablle, let the user log in.
+    The interactive flow (``run_local_server``) blocks on a human finishing
+    consent in a browser, so callers must NEVER invoke this from an HTTP
+    request thread when a new authorization may be needed (SEC-6/CQ-72) —
+    the server runs it on a background connect job. ``oauth_timeout_seconds``
+    bounds how long the local consent server waits before giving up.
+    """
+    _remove_stale_legacy_token_file()
+    creds = _load_stored_token()
+    # if there are no (valid) credentials available, let the user log in.
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             try:
@@ -253,8 +267,10 @@ def gmail_authenticate():
                 raise GmailAuthError(f"Gmail refresh failed: {exc}") from exc
         else:
             client_config = _load_client_config()
-            flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
-            creds = flow.run_local_server(port=0)
+            flow = InstalledAppFlow.from_client_config(client_config, [GMAIL_SCOPE])
+            creds = flow.run_local_server(port=0, timeout_seconds=oauth_timeout_seconds)
+            if creds is None:
+                raise GmailAuthError("Gmail sign-in didn't finish in time. Try again.")
         _persist_token(creds)
     try:
         return build("gmail", "v1", credentials=creds)

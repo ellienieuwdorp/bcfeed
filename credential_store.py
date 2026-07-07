@@ -102,9 +102,27 @@ def get_gmail_client_config_json() -> str | None:
 
 
 def save_gmail_client_config_json(raw_json: str) -> dict:
+    """Validate and store a Google OAuth client-secret JSON document.
+
+    The payload must look like the file Google Cloud issues for an OAuth
+    client — an ``installed`` (or ``web``) section carrying ``client_id`` and
+    ``client_secret`` (SEC-6): arbitrary JSON is rejected before anything is
+    stored. Validation errors raise ``ValueError``; callers map them to
+    generic client-facing messages.
+    """
     parsed = json.loads(raw_json)
     if not isinstance(parsed, dict):
         raise ValueError("Gmail credentials JSON must contain an object")
+    section = parsed.get("installed") or parsed.get("web")
+    if (
+        not isinstance(section, dict)
+        or not section.get("client_id")
+        or not section.get("client_secret")
+    ):
+        raise ValueError(
+            "Gmail credentials JSON must be an OAuth client file with an "
+            "'installed' or 'web' section containing client_id and client_secret"
+        )
     _set_secret(GMAIL_CLIENT_CONFIG_KEY, json.dumps(parsed))
     return parsed
 

@@ -484,6 +484,58 @@ def clear_credentials():
         ), 500
 
 
+# --- Gmail connect job (WP-13 · SEC-6/CQ-72/UXP-4-backend) -------------------
+# /load-credentials must return immediately: the interactive OAuth consent
+# (gmail_authenticate → flow.run_local_server) blocks on a human finishing a
+# browser flow, so it runs on a background thread — never a request thread.
+# This in-memory job record is the minimal status surface the dashboard polls
+# via GET /connect-status (states: idle|waiting|done|failed); the full modal
+# UX arrives with WP-23.
+GMAIL_CONNECT_TIMEOUT_SECONDS = 180  # ~3 min for the user to finish consent
+
+_CONNECT_WAITING_MESSAGE = (
+    "Finish connecting your Gmail account in the browser window that just opened."
+)
+_CONNECT_DONE_MESSAGE = "Gmail connected."
+_CONNECT_FAILED_MESSAGE = (
+    "The Gmail connection didn't complete. Try loading the credentials file again."
+)
+
+_gmail_connect_lock = threading.Lock()
+_gmail_connect_job: dict = {"status": "idle", "message": None, "thread": None}
+
+
+def _set_gmail_connect_status(status: str, message: str | None) -> None:
+    with _gmail_connect_lock:
+        _gmail_connect_job["status"] = status
+        _gmail_connect_job["message"] = message
+
+
+def _gmail_connect_worker() -> None:
+    """Run the interactive OAuth flow off the request thread (SEC-6/CQ-72)."""
+    try:
+        gmail_authenticate(oauth_timeout_seconds=GMAIL_CONNECT_TIMEOUT_SECONDS)
+    except Exception:
+        # Fixed generic status message only — exception detail (including any
+        # keychain error text) goes to the server log, never a client (SEC-9).
+        app.logger.exception("Gmail connect flow failed")
+        _set_gmail_connect_status("failed", _CONNECT_FAILED_MESSAGE)
+    else:
+        _set_gmail_connect_status("done", _CONNECT_DONE_MESSAGE)
+
+
+@app.route("/connect-status", methods=["GET"])
+def connect_status():
+    """Status of the background Gmail connect job: idle|waiting|done|failed."""
+    with _gmail_connect_lock:
+        return jsonify(
+            {
+                "status": _gmail_connect_job["status"],
+                "message": _gmail_connect_job["message"],
+            }
+        )
+
+
 @app.route("/load-credentials", methods=["POST"])
 def load_credentials():
     logs: list[str] = []
@@ -501,12 +553,28 @@ def load_credentials():
         raw_json = file.read()
         if not raw_json:
             return jsonify({"error": "Uploaded file was empty"}), 400
-        save_gmail_client_config_json(raw_json.decode("utf-8"))
-        clear_gmail_credentials(clear_client_config=False)
-        log("Saved Gmail credentials to secure storage. Authenticating…")
-        gmail_authenticate()
-        log("Credentials uploaded and authenticated.")
-        return jsonify({"ok": True, "logs": logs})
+
+        with _gmail_connect_lock:
+            running = _gmail_connect_job["thread"]
+            if running is not None and running.is_alive():
+                return jsonify(
+                    {"error": "A Gmail connection attempt is already in progress.", "logs": logs}
+                ), 409
+            # Shape-validates the client-secret document (SEC-6) before
+            # anything is stored; a ValueError lands in the generic 400 below.
+            save_gmail_client_config_json(raw_json.decode("utf-8"))
+            clear_gmail_credentials(clear_client_config=False)
+            log("Saved Gmail credentials to secure storage. Continue in your browser…")
+            _gmail_connect_job["status"] = "waiting"
+            _gmail_connect_job["message"] = _CONNECT_WAITING_MESSAGE
+            worker = threading.Thread(target=_gmail_connect_worker, daemon=True)
+            _gmail_connect_job["thread"] = worker
+            worker.start()
+
+        # The consent flow continues on the background thread; this response
+        # returns immediately (SEC-6/CQ-72) and the dashboard polls
+        # /connect-status for waiting|done|failed.
+        return jsonify({"ok": True, "status": "waiting", "logs": logs})
     except UnicodeDecodeError:
         return jsonify({"error": "Credentials file must be valid UTF-8 JSON", "logs": logs}), 400
     except ValueError:

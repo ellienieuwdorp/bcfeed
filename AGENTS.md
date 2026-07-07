@@ -62,7 +62,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `no_results_dates.json` | `["YYYY-MM-DD", …]` | Days known to have zero results |
 | `provider_config.json` | `{ "provider": "gmail"|"imap", "imap_config": {host, port, username, folder, use_ssl} }` | Active email provider + non-secret IMAP settings (password is NOT stored here — it lives in the keychain) |
 
-**Secrets are no longer stored on disk.** They live in the system keychain under service `bcfeed` (see `credential_store.py`): `imap-password`, `gmail-client-config` (the former `credentials.json`), and `gmail-token` (the former `token.pickle`). `paths.py` still defines `CREDENTIALS_PATH` (`credentials.json`) and `TOKEN_PATH` (`token.pickle`) purely as **legacy migration/import sources**: on first use `gmail_client` reads any old `credentials.json`/`token.pickle`, copies it into the keychain, then deletes the on-disk file. Do not write secrets to these paths in new code.
+**Secrets are no longer stored on disk.** They live in the system keychain under service `bcfeed` (see `credential_store.py`): `imap-password`, `gmail-client-config` (the former `credentials.json`), and `gmail-token`. `paths.py` still defines `CREDENTIALS_PATH` (`credentials.json`) purely as a **legacy migration/import source**: on first use `gmail_client` reads any old `credentials.json`, copies it into the keychain, then deletes the on-disk file. The legacy pickle-token migration is fully retired (WP-13): a stale legacy token file is unlinked by literal filename in `gmail_client` and never read. Do not write secrets to any on-disk path in new code.
 
 Release dict fields: `img_url` (always null currently), `date`, `artist`, `title`, `page_name`, `url`, `release_id`, `is_track`. Enrichment fields (`embed_url`, `description`) are merged in from `embed_cache.json` by `/releases` at read time. Identity key is `url`.
 
@@ -91,7 +91,7 @@ Release dict fields: `img_url` (always null currently), `date`, `artist`, `title
 - The UI persists to localStorage: `bc_dashboard_theme`, `bc_calendar_state_v1`, cached-badge key. The server owns viewed/starred state.
 - "Today is never scraped": `exclude_today` logic is pervasive (`session_store.py`) and the calendar blocks selecting today. Don't break this invariant.
 - `.gitignore` blocks `*.json` — deliberate, so stray OAuth credentials can't be committed. `requirements.txt` etc. are tracked exceptions already; adding a new tracked `.json` file requires a `!` rule.
-- Known mismatch: docs instruct the `gmail.readonly` scope but `gmail_client.py:217` still requests full `https://mail.google.com/` — flagged in `docs/current-state/known-issues.md` (SEC-3); a fix must invalidate existing tokens carefully.
+- Gmail scope is read-only: `gmail_client.GMAIL_SCOPE` (`gmail.readonly`) is the ONLY scope the codebase may ever request (SEC-3 fixed in WP-13). Token load invalidates any stored authorization whose scopes differ, forcing a reconnect — don't weaken that check.
 - Bind address is `0.0.0.0` (`server.py:186` `start_server`, and the `__main__` `app.run` at `server.py:822`) and CORS is `*` — known hardening item (SEC-1), see `docs/current-state/known-issues.md`.
 - The hand-rolled markdown renderer flagged in the original audit has been **replaced** by `markdown-it-py` (`server.py` `_build_doc_markdown_renderer`); that finding no longer applies.
 - The dashboard was only ever tested on Chrome/macOS.

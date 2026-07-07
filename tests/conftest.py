@@ -91,6 +91,40 @@ def data_dir(isolated_data_dir):
 
 
 # ---------------------------------------------------------------------------
+# Keychain isolation (WP-13)
+# ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def isolated_keyring(monkeypatch):
+    """Route all keyring traffic to an in-memory dict for every test.
+
+    credential_store reads AND — since WP-13's legacy-scope invalidation —
+    can *delete* secrets from read-looking paths like ``/config.json``, so no
+    test may ever touch the developer's real keychain. Returns the backing
+    dict (keyed by ``(service, name)``) so tests can seed/inspect secrets.
+    """
+    import keyring
+    import keyring.errors
+
+    store: dict[tuple[str, str], str] = {}
+
+    def _get(service, name):
+        return store.get((service, name))
+
+    def _set(service, name, value):
+        store[(service, name)] = value
+
+    def _delete(service, name):
+        if (service, name) not in store:
+            raise keyring.errors.PasswordDeleteError(name)
+        del store[(service, name)]
+
+    monkeypatch.setattr(keyring, "get_password", _get)
+    monkeypatch.setattr(keyring, "set_password", _set)
+    monkeypatch.setattr(keyring, "delete_password", _delete)
+    return store
+
+
+# ---------------------------------------------------------------------------
 # Frozen "today"
 # ---------------------------------------------------------------------------
 @pytest.fixture

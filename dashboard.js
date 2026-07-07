@@ -25,6 +25,7 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
   let healthUrl = apiRoot ? `${apiRoot}/health` : null;
   let clearCredsUrl = apiRoot ? `${apiRoot}/clear-credentials` : null;
   let loadCredsUrl = apiRoot ? `${apiRoot}/load-credentials` : null;
+  let connectStatusUrl = apiRoot ? `${apiRoot}/connect-status` : null;
   let starredApi = apiRoot ? `${apiRoot}/starred-state` : null;
   let clearStatusOnLoad = false;
   let showDevSettings = false;
@@ -64,6 +65,7 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
   healthUrl = apiRoot ? `${apiRoot}/health` : null;
   clearCredsUrl = apiRoot ? `${apiRoot}/clear-credentials` : null;
   loadCredsUrl = apiRoot ? `${apiRoot}/load-credentials` : null;
+  connectStatusUrl = apiRoot ? `${apiRoot}/connect-status` : null;
   starredApi = apiRoot ? `${apiRoot}/starred-state` : null;
   // Single derivation point for the API host, after config has been applied.
   const apiHost = (() => {
@@ -407,6 +409,38 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
     });
   }
   if (loadCredsBtn && loadCredsFile && loadCredsUrl) {
+    // WP-13: /load-credentials returns immediately while the Google consent
+    // flow runs on a server background thread. Poll the status surface and
+    // reflect waiting/done/failed in the existing status area (the full
+    // modal UX is WP-23).
+    const pollConnectStatus = async () => {
+      if (!connectStatusUrl) return;
+      const deadline = Date.now() + 200000; // a little past the server's ~3 min limit
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        let data = null;
+        try {
+          const resp = await fetch(connectStatusUrl, { cache: "no-store" });
+          if (resp.ok) data = await resp.json();
+        } catch (e) {
+          // Server briefly unreachable — keep polling until the deadline.
+        }
+        if (!data) continue;
+        if (data.status === "done") {
+          if (populateLog) populateLog.textContent = data.message || "Gmail connected.";
+          missingToken = false;
+          return;
+        }
+        if (data.status === "failed" || data.status === "idle") {
+          if (populateLog)
+            populateLog.textContent =
+              data.message || "The Gmail connection didn't complete. Try again.";
+          return;
+        }
+        if (populateLog && data.message) populateLog.textContent = data.message;
+      }
+      if (populateLog) populateLog.textContent = "The Gmail connection didn't complete. Try again.";
+    };
     const doLoadCreds = async () => {
       const file = loadCredsFile.files && loadCredsFile.files[0];
       if (!file) return;
@@ -428,9 +462,9 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
           if (populateLog) populateLog.textContent = next;
           alert(msg);
         } else {
-          const msg = joinedLogs || "Credentials loaded and authenticated.";
+          const msg = joinedLogs || "Credentials saved. Continue in your browser…";
           if (populateLog) populateLog.textContent = msg;
-          alert("Credentials loaded.");
+          if (data.status === "waiting") pollConnectStatus();
         }
       } catch (err) {
         const msg = String(err || "Failed to load credentials.");

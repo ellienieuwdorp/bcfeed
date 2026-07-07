@@ -45,7 +45,7 @@ This setup is required only once and takes a few minutes.
 
 ### 4. Add Gmail read-only API scope
 
-This allows the app to read your Gmail messages.
+This allows the app to read your Gmail messages. Read-only is the only scope **bcfeed** ever requests — it cannot send, modify, or delete mail.
 
 1. From the left-hand menu, click **Data Access**.
 2. Click **Add or remove scopes**.
@@ -124,6 +124,9 @@ Publishing the app to **In Production** fixes this.
 
 **I get a 403 or insufficient permissions error.**  
 Make sure you enabled the Gmail API and used the downloaded OAuth file.
+
+**The app asked me to reconnect after an update.**
+**bcfeed** now asks for read-only access to Gmail instead of full access, so an authorization created by an older version is no longer used. Reconnect once via **Settings → Email Configuration → Load credentials** and the new read-only authorization is stored.
 
 **The app says secure credential storage is unavailable.**
 **bcfeed** stores imported Gmail OAuth material and Gmail tokens in the system keychain. Make sure your machine has a supported keychain backend available.

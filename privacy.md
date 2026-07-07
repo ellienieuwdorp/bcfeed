@@ -4,7 +4,7 @@ This application runs on your local machine.
 
 - The application does not collect, transmit, store, or share your data with the author or any third party.
 
-- Gmail API access is performed locally using OAuth credentials that you create and control in your own Google Cloud project.
+- Gmail API access is performed locally using OAuth credentials that you create and control in your own Google Cloud project. The application requests only the read-only Gmail scope, so it can never send, modify, or delete your mail.
 
 - IMAP access is performed locally using server credentials that you create and control with your email provider.
 
