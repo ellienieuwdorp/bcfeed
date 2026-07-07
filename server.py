@@ -18,7 +18,7 @@ from werkzeug.serving import WSGIRequestHandler, make_server
 
 import docs_render
 import json_store
-from bandcamp import embed_cache_snapshot, get_embed_meta
+from bandcamp import FetchBlockedError, embed_cache_snapshot, get_embed_meta
 from credential_store import (
     CredentialStoreError,
     has_imap_password,
@@ -388,6 +388,10 @@ def embed_meta():
         return jsonify({"error": "Missing url parameter"}), 400
     try:
         record = get_embed_meta(release_url)
+    except FetchBlockedError:
+        # One generic body for every rejected URL (SEC-2): no hint which
+        # validation check failed, and nothing was fetched or cached.
+        return jsonify({"error": "That link can't be loaded."}), 400
     except Exception:
         app.logger.exception("Embed metadata lookup failed")
         return jsonify({"error": "Couldn't load details for this release."}), 502
