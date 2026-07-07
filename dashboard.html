@@ -207,31 +207,35 @@
           <table aria-label="Bandcamp releases">
             <thead>
               <tr>
-                <th class="col-marker"></th>
-                <th class="col-star"></th>
-                <th data-sort="page_name" class="col-page" tabindex="0">
-                  <span class="th-inner"
-                    >Label / page<svg class="sort-indicator" aria-hidden="true">
-                      <use href="#icon-chevron-down"></use></svg
-                  ></span>
+                <th class="col-marker" scope="col"><span class="sr-only">Seen</span></th>
+                <th class="col-star" scope="col"><span class="sr-only">Starred</span></th>
+                <th data-sort="page_name" class="col-page" scope="col" aria-sort="none">
+                  <button type="button" class="th-inner" data-sort-btn>
+                    Label / page<svg class="sort-indicator" aria-hidden="true">
+                      <use href="#icon-chevron-down"></use>
+                    </svg>
+                  </button>
                 </th>
-                <th data-sort="artist" class="col-artist" tabindex="0">
-                  <span class="th-inner"
-                    >Artist<svg class="sort-indicator" aria-hidden="true">
-                      <use href="#icon-chevron-down"></use></svg
-                  ></span>
+                <th data-sort="artist" class="col-artist" scope="col" aria-sort="none">
+                  <button type="button" class="th-inner" data-sort-btn>
+                    Artist<svg class="sort-indicator" aria-hidden="true">
+                      <use href="#icon-chevron-down"></use>
+                    </svg>
+                  </button>
                 </th>
-                <th data-sort="title" class="col-title" tabindex="0">
-                  <span class="th-inner"
-                    >Title<svg class="sort-indicator" aria-hidden="true">
-                      <use href="#icon-chevron-down"></use></svg
-                  ></span>
+                <th data-sort="title" class="col-title" scope="col" aria-sort="none">
+                  <button type="button" class="th-inner" data-sort-btn>
+                    Title<svg class="sort-indicator" aria-hidden="true">
+                      <use href="#icon-chevron-down"></use>
+                    </svg>
+                  </button>
                 </th>
-                <th data-sort="date" class="col-date" tabindex="0">
-                  <span class="th-inner"
-                    >Date<svg class="sort-indicator" aria-hidden="true">
-                      <use href="#icon-chevron-down"></use></svg
-                  ></span>
+                <th data-sort="date" class="col-date" scope="col" aria-sort="none">
+                  <button type="button" class="th-inner" data-sort-btn>
+                    Date<svg class="sort-indicator" aria-hidden="true">
+                      <use href="#icon-chevron-down"></use>
+                    </svg>
+                  </button>
                 </th>
               </tr>
             </thead>
@@ -248,6 +252,7 @@
               type="button"
               id="status-toggle"
               class="button status-toggle"
+              aria-label="Toggle status details"
               aria-expanded="true"
             >
               <svg class="status-carat icon" aria-hidden="true">
@@ -263,10 +268,10 @@
       </main>
     </div>
     <div id="settings-backdrop" class="settings-backdrop">
-      <div class="settings-panel">
+      <div class="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <!-- Header -->
         <div class="settings-header">
-          <h2>Settings</h2>
+          <h2 id="settings-title">Settings</h2>
           <button id="settings-close" class="button" aria-label="Close settings">
             <svg class="icon" aria-hidden="true"><use href="#icon-x"></use></svg>
           </button>
@@ -480,7 +485,12 @@
       </div>
     </div>
     <div id="server-down-backdrop" class="server-down-backdrop">
-      <div class="server-down-modal">
+      <div
+        class="server-down-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="bcfeed connection lost"
+      >
         <p class="modal-lead">
           Can't reach bcfeed. Restart the app, then try again — this message will clear on its own
           once the app is back.
@@ -489,15 +499,20 @@
       </div>
     </div>
     <div id="max-results-backdrop" class="max-results-backdrop">
-      <div class="max-results-modal">
+      <div class="max-results-modal" role="dialog" aria-modal="true" aria-label="Too many results">
         Exceeded the maximum number of results per Gmail search. Try again with a shorter date
         range.
       </div>
     </div>
     <div id="missing-token-backdrop" class="settings-backdrop">
-      <div class="missing-token-modal">
+      <div
+        class="missing-token-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="missing-token-title"
+      >
         <div class="modal-title-row">
-          <h2>Credentials needed</h2>
+          <h2 id="missing-token-title">Credentials needed</h2>
           <button id="missing-token-close" class="button" aria-label="Close">
             <svg class="icon" aria-hidden="true"><use href="#icon-x"></use></svg>
           </button>
@@ -512,9 +527,14 @@
       </div>
     </div>
     <div id="load-creds-backdrop" class="settings-backdrop">
-      <div class="missing-token-modal">
+      <div
+        class="missing-token-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="load-creds-title"
+      >
         <div class="modal-title-row">
-          <h2>Load credentials</h2>
+          <h2 id="load-creds-title">Load credentials</h2>
           <button id="load-creds-close" class="button" aria-label="Close">
             <svg class="icon" aria-hidden="true"><use href="#icon-x"></use></svg>
           </button>

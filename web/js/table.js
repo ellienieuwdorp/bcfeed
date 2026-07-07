@@ -22,6 +22,7 @@ import {
   markCachedBadge,
   setStarred,
   setRowReadState,
+  updateReadDot,
   markVisibleRows,
 } from "./state.js";
 import { renderFilters } from "./filters.js";
@@ -52,7 +53,10 @@ export function closeOpenDetailRows() {
     if (iframe) iframe.remove();
     node.remove();
   });
-  document.querySelectorAll("tr.data-row").forEach((row) => row.classList.remove("expanded"));
+  document.querySelectorAll("tr.data-row").forEach((row) => {
+    row.classList.remove("expanded");
+    row.setAttribute("aria-expanded", "false");
+  });
   state.expandedKey = null;
 }
 
@@ -215,10 +219,11 @@ export function renderTable() {
     tr.dataset.key = key;
     tr.dataset.page = release.page_name || "";
     tr.tabIndex = 0;
+    tr.setAttribute("aria-expanded", "false");
     const safePageUrl = safeHttpUrl(pageUrlFor(release)) || "#";
     const safeReleaseUrl = safeHttpUrl(release.url) || "#";
     tr.innerHTML = `
-          <td data-marker-cell class="col-marker"><span class="row-dot"></span></td>
+          <td data-marker-cell class="col-marker"><button type="button" class="row-dot" data-marker-btn aria-pressed="false" aria-label="Mark as seen"></button></td>
           <td class="col-star">
             <button type="button" class="star-btn" data-star-btn aria-label="Star this release" aria-pressed="false" title="Star this release">
               <svg aria-hidden="true"><use href="#icon-star"></use></svg>
@@ -230,8 +235,7 @@ export function renderTable() {
           <td>${esc(formatDate(release.date))}</td>
         `;
     const existingRead = state.viewed.has(key);
-    const initialDot = tr.querySelector(".row-dot");
-    if (initialDot) initialDot.classList.toggle("read", existingRead);
+    updateReadDot(tr.querySelector(".row-dot"), existingRead);
     tr.classList.toggle("unseen", !existingRead);
     if (state.starred.has(key)) {
       tr.classList.add("starred");
@@ -263,6 +267,7 @@ function expandRow(evt, tr, release, key) {
   if (wasVisible) {
     closeOpenDetailRows();
     state.expandedKey = null;
+    tr.setAttribute("aria-expanded", "false");
     return;
   }
 
@@ -277,6 +282,7 @@ function expandRow(evt, tr, release, key) {
     detail.style.display = "";
   }
   tr.classList.add("expanded");
+  tr.setAttribute("aria-expanded", "true");
   state.expandedKey = key;
 
   const embedTarget = detail.querySelector("[data-embed-target]");

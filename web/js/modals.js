@@ -25,39 +25,137 @@ const loadCredsBackdrop = document.getElementById("load-creds-backdrop");
 const loadCredsClose = document.getElementById("load-creds-close");
 const loadCredsContinue = document.getElementById("load-creds-continue");
 
+// --- Modal manager (role=dialog + focus trap + Escape + focus restore) ------
+//
+// One implementation for every modal (WP-21/JS-7). The dialog markup (role,
+// aria-modal, aria-labelledby/aria-label) lives in dashboard.html; this manager
+// owns the runtime behaviour: move focus INTO the dialog on open, trap Tab /
+// Shift-Tab inside it, close on Escape, and RESTORE focus to the trigger on
+// close. A small stack supports the rare nested case (missing-token → settings).
+const FOCUSABLE_SELECTOR = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  '[tabindex]:not([tabindex="-1"])',
+].join(",");
+
+// backdrop -> { panel, close }
+const modalRegistry = new Map();
+// active modals, innermost last: { backdrop, panel, close, trigger }
+const openStack = [];
+
+function panelOf(backdrop) {
+  return backdrop.querySelector('[role="dialog"]') || backdrop.firstElementChild || backdrop;
+}
+
+function focusablesIn(panel) {
+  return Array.from(panel.querySelectorAll(FOCUSABLE_SELECTOR)).filter(
+    (el) => el.offsetParent !== null || el === document.activeElement,
+  );
+}
+
+function registerModal(backdrop, closeFn) {
+  if (!backdrop) return;
+  modalRegistry.set(backdrop, { panel: panelOf(backdrop), close: closeFn });
+}
+
+function openModal(backdrop) {
+  const entry = modalRegistry.get(backdrop);
+  if (!entry) {
+    // Unregistered fallback: still show it.
+    if (backdrop) backdrop.style.display = "flex";
+    return;
+  }
+  if (openStack.some((m) => m.backdrop === backdrop)) return;
+  const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  backdrop.style.display = "flex";
+  openStack.push({ backdrop, panel: entry.panel, close: entry.close, trigger });
+  const focusables = focusablesIn(entry.panel);
+  (focusables[0] || entry.panel).focus();
+}
+
+function closeModal(backdrop) {
+  const idx = openStack.findIndex((m) => m.backdrop === backdrop);
+  backdrop.style.display = "none";
+  if (idx === -1) return;
+  const [entry] = openStack.splice(idx, 1);
+  if (entry.trigger && document.contains(entry.trigger)) {
+    entry.trigger.focus();
+  }
+}
+
+document.addEventListener("keydown", (evt) => {
+  // Drop any entries whose backdrop was hidden out-of-band (e.g. a test forcing
+  // display:none) so the trap never fires for an invisible dialog.
+  while (openStack.length) {
+    const top = openStack[openStack.length - 1];
+    const visible = top.backdrop && top.backdrop.style.display !== "none";
+    if (!visible) {
+      openStack.pop();
+      continue;
+    }
+    if (evt.key === "Escape") {
+      evt.preventDefault();
+      top.close();
+      return;
+    }
+    if (evt.key === "Tab") {
+      const focusables = focusablesIn(top.panel);
+      if (!focusables.length) {
+        evt.preventDefault();
+        return;
+      }
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const activeEl = document.activeElement;
+      if (evt.shiftKey && (activeEl === first || !top.panel.contains(activeEl))) {
+        evt.preventDefault();
+        last.focus();
+      } else if (!evt.shiftKey && (activeEl === last || !top.panel.contains(activeEl))) {
+        evt.preventDefault();
+        first.focus();
+      }
+    }
+    return;
+  }
+});
+
 // --- Server-down modal ------------------------------------------------------
 let serverDownShown = false;
 export function showServerDownModal() {
   if (serverDownShown) return;
   serverDownShown = true;
-  if (serverDownBackdrop) serverDownBackdrop.style.display = "flex";
+  openModal(serverDownBackdrop);
 }
 export function hideServerDownModal() {
   if (!serverDownShown) return;
   serverDownShown = false;
-  if (serverDownBackdrop) serverDownBackdrop.style.display = "none";
+  if (serverDownBackdrop) closeModal(serverDownBackdrop);
 }
 
 // --- Max-results modal ------------------------------------------------------
 export function showMaxResultsModal() {
-  if (maxResultsBackdrop) maxResultsBackdrop.style.display = "flex";
+  openModal(maxResultsBackdrop);
 }
 export function hideMaxResultsModal() {
-  if (maxResultsBackdrop) maxResultsBackdrop.style.display = "none";
+  if (maxResultsBackdrop) closeModal(maxResultsBackdrop);
 }
 
 // --- Settings modal ---------------------------------------------------------
 export function toggleSettings(open) {
   if (!settingsBackdrop) return;
-  settingsBackdrop.style.display = open ? "flex" : "none";
+  if (open) openModal(settingsBackdrop);
+  else closeModal(settingsBackdrop);
 }
 
 // --- Missing-credentials modal ---------------------------------------------
 function showMissingTokenModal() {
-  if (missingTokenBackdrop) missingTokenBackdrop.style.display = "flex";
+  openModal(missingTokenBackdrop);
 }
 function hideMissingTokenModal() {
-  if (missingTokenBackdrop) missingTokenBackdrop.style.display = "none";
+  if (missingTokenBackdrop) closeModal(missingTokenBackdrop);
   toggleSettings(true);
 }
 
@@ -172,18 +270,19 @@ function wireLoadCreds() {
   };
   const showLoadCredsModal = () => {
     if (loadCredsBackdrop) {
-      loadCredsBackdrop.style.display = "flex";
+      openModal(loadCredsBackdrop);
     } else {
       openLoadCredsFile();
     }
   };
   const hideLoadCredsModal = () => {
-    if (loadCredsBackdrop) loadCredsBackdrop.style.display = "none";
+    if (loadCredsBackdrop) closeModal(loadCredsBackdrop);
   };
   const confirmLoadCredsModal = () => {
     hideLoadCredsModal();
     openLoadCredsFile();
   };
+  registerModal(loadCredsBackdrop, hideLoadCredsModal);
   if (loadCredsClose) loadCredsClose.addEventListener("click", hideLoadCredsModal);
   if (loadCredsContinue) loadCredsContinue.addEventListener("click", confirmLoadCredsModal);
   if (loadCredsBackdrop) {
@@ -201,6 +300,15 @@ function wireLoadCreds() {
 
 // Wire every modal's listeners. Called once by main.js after endpoints exist.
 export function initModals() {
+  // Register every modal with the shared focus-trap/dialog manager.
+  registerModal(serverDownBackdrop, hideServerDownModal);
+  registerModal(maxResultsBackdrop, hideMaxResultsModal);
+  registerModal(settingsBackdrop, () => {
+    resetLoadCredsBtn();
+    toggleSettings(false);
+  });
+  registerModal(missingTokenBackdrop, hideMissingTokenModal);
+
   if (serverDownRetry) {
     serverDownRetry.addEventListener("click", () => checkServerAlive());
   }

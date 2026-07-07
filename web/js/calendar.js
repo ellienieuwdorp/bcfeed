@@ -18,6 +18,19 @@ import { renderTable } from "./table.js";
 import { updateStatusForDateFilter, updateHeaderRange } from "./status.js";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const WEEKDAY_NAMES = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+const ARROW_KEYS = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"];
+// The day cell that owns the grid's single tab stop (roving tabindex). Persisted
+// across re-renders so keyboard focus lands where the user left it (WP-21/JS-7).
+let activeCellKey = null;
 const calendarRange = document.getElementById("calendar-range");
 const calendarRangeMonth = document.getElementById("calendar-range-month");
 const dateFilterFrom = document.getElementById("date-filter-from");
@@ -37,6 +50,10 @@ export function renderCalendar(type) {
   renderCounts.calendar += 1;
   const grid = cal.container;
   grid.innerHTML = "";
+  // Real keyboard grid: container is role=grid, weekday cells are columnheaders,
+  // day cells are focusable gridcell buttons driven by arrow keys (JS-7/UI-12).
+  grid.setAttribute("role", "grid");
+  grid.setAttribute("aria-label", "Calendar — choose a date range");
 
   if (calendarRangeMonth) {
     calendarRangeMonth.textContent = cal.current.toLocaleString("en-US", {
@@ -45,9 +62,11 @@ export function renderCalendar(type) {
     });
   }
 
-  WEEKDAYS.forEach((day) => {
+  WEEKDAYS.forEach((day, i) => {
     const label = document.createElement("div");
     label.className = "calendar-weekday";
+    label.setAttribute("role", "columnheader");
+    label.setAttribute("aria-label", WEEKDAY_NAMES[i]);
     label.textContent = day;
     grid.appendChild(label);
   });
@@ -73,83 +92,192 @@ export function renderCalendar(type) {
     const cellDate = new Date(cal.current.getFullYear(), cal.current.getMonth(), dayNumber);
     const isOtherMonth = cellDate.getMonth() !== cal.current.getMonth();
     const key = isoKeyFromDate(cellDate);
-    const cell = document.createElement("div");
+    const cell = document.createElement("button");
+    cell.type = "button";
     cell.className = "calendar-day";
+    cell.setAttribute("role", "gridcell");
+    cell.dataset.idx = String(idx);
+    cell.dataset.key = key;
     const isDisabled = cellDate > lastSelectable;
     if (isOtherMonth) cell.classList.add("other-month");
     if (isDisabled) cell.classList.add("disabled");
-    // Focusable landing spot so the global :focus-visible ring has a target on
-    // day cells (UIR-13/UIR-27); full grid key semantics belong to WP-21.
-    if (!isDisabled && !isOtherMonth) cell.tabIndex = 0;
-    if (cal.startKey === key || cal.endKey === key) cell.classList.add("selected");
-    if (
+    const isSelected = cal.startKey === key || cal.endKey === key;
+    if (isSelected) cell.classList.add("selected");
+    const inRange =
       startSelectedDate &&
       endSelectedDate &&
       cellDate >= startSelectedDate &&
-      cellDate <= endSelectedDate
-    ) {
-      cell.classList.add("in-range");
-    }
-    cell.textContent = "";
+      cellDate <= endSelectedDate;
+    if (inRange) cell.classList.add("in-range");
+    const isScraped = scrapeStatus.scraped.has(key);
+    if (isScraped) cell.classList.add("populated-day");
+
     const dateLabel = document.createElement("span");
     dateLabel.className = "date-label";
     dateLabel.textContent = String(cellDate.getDate());
-    if (scrapeStatus.scraped.has(key)) {
-      cell.classList.add("populated-day");
-    }
     cell.appendChild(dateLabel);
     const dots = document.createElement("div");
     dots.className = "dot-strip";
-    if (unseenByDay.has(key)) {
+    const hasUnseen = unseenByDay.has(key);
+    if (hasUnseen) {
       const dot = document.createElement("span");
       dot.className = "dot unseen";
       dots.appendChild(dot);
     }
     cell.appendChild(dots);
 
-    cell.addEventListener("click", (evt) => {
-      if (isDisabled) return;
-      const clickedKey = key;
-      if (evt.shiftKey) {
-        const startKey = cal.startKey || cal.endKey;
-        const endKey = cal.endKey || cal.startKey;
-        const baseStart = startKey ? parseDateString(startKey) : null;
-        const baseEnd = endKey ? parseDateString(endKey) : null;
-        const clickedDate = parseDateString(clickedKey);
-        if (baseStart && baseEnd && clickedDate) {
-          const newStart = baseStart < baseEnd ? baseStart : baseEnd;
-          const newEnd = baseStart < baseEnd ? baseEnd : baseStart;
-          if (clickedDate < newStart) {
-            cal.startKey = isoKeyFromDate(clickedDate);
-            cal.endKey = isoKeyFromDate(newEnd);
-          } else if (clickedDate > newEnd) {
-            cal.startKey = isoKeyFromDate(newStart);
-            cal.endKey = isoKeyFromDate(clickedDate);
-          } else {
-            // clicked inside range → collapse to single day
-            cal.startKey = clickedKey;
-            cal.endKey = null;
-          }
-        } else if (cal.startKey) {
-          cal.endKey = clickedKey;
-          const s = parseDateString(cal.startKey);
-          const e = parseDateString(cal.endKey);
-          if (s && e && e < s) {
-            cal.endKey = cal.startKey;
-            cal.startKey = clickedKey;
-          }
-        } else {
-          cal.startKey = clickedKey;
-          cal.endKey = null;
-        }
+    if (isOtherMonth) {
+      // Empty placeholders — hidden from AT and unfocusable.
+      cell.setAttribute("aria-hidden", "true");
+      cell.tabIndex = -1;
+    } else {
+      // Accessible name announces the full date + coverage/unseen state, so a
+      // screen reader hears "June 20, has new releases, checked" (UXP-17).
+      const monthLong = cellDate.toLocaleString("en-US", { month: "long" });
+      let label = `${monthLong} ${cellDate.getDate()}, ${cellDate.getFullYear()}`;
+      if (hasUnseen) label += ", has new releases";
+      if (isScraped) label += ", checked";
+      if (isDisabled) label += ", unavailable";
+      cell.setAttribute("aria-label", label);
+      if (isDisabled) {
+        cell.setAttribute("aria-disabled", "true");
+        cell.tabIndex = -1;
       } else {
+        cell.setAttribute("aria-pressed", String(!!(isSelected || inRange)));
+        cell.tabIndex = -1; // roving; the active cell is promoted to 0 below
+      }
+    }
+
+    cell.addEventListener("click", (evt) => {
+      if (isDisabled || isOtherMonth) return;
+      activeCellKey = key;
+      applyDaySelection(cal, key, evt.shiftKey);
+    });
+    grid.appendChild(cell);
+  }
+
+  // Roving tabindex: exactly one focusable day owns the grid's tab stop.
+  const focusable = Array.from(
+    grid.querySelectorAll(".calendar-day:not(.other-month):not(.disabled)"),
+  );
+  let active = focusable.find((b) => b.dataset.key === activeCellKey);
+  if (!active) active = focusable.find((b) => b.classList.contains("selected")) || focusable[0];
+  if (active) {
+    active.tabIndex = 0;
+    activeCellKey = active.dataset.key;
+  }
+}
+
+// Shared range-selection logic used by both pointer clicks and keyboard
+// Enter/Space, so the two paths never diverge.
+function applyDaySelection(cal, clickedKey, shiftKey) {
+  if (shiftKey) {
+    const startKey = cal.startKey || cal.endKey;
+    const endKey = cal.endKey || cal.startKey;
+    const baseStart = startKey ? parseDateString(startKey) : null;
+    const baseEnd = endKey ? parseDateString(endKey) : null;
+    const clickedDate = parseDateString(clickedKey);
+    if (baseStart && baseEnd && clickedDate) {
+      const newStart = baseStart < baseEnd ? baseStart : baseEnd;
+      const newEnd = baseStart < baseEnd ? baseEnd : baseStart;
+      if (clickedDate < newStart) {
+        cal.startKey = isoKeyFromDate(clickedDate);
+        cal.endKey = isoKeyFromDate(newEnd);
+      } else if (clickedDate > newEnd) {
+        cal.startKey = isoKeyFromDate(newStart);
+        cal.endKey = isoKeyFromDate(clickedDate);
+      } else {
+        // clicked inside range → collapse to single day
         cal.startKey = clickedKey;
         cal.endKey = null;
       }
-      renderCalendar("range");
-      applyCalendarFiltersFromSelection();
-    });
-    grid.appendChild(cell);
+    } else if (cal.startKey) {
+      cal.endKey = clickedKey;
+      const s = parseDateString(cal.startKey);
+      const e = parseDateString(cal.endKey);
+      if (s && e && e < s) {
+        cal.endKey = cal.startKey;
+        cal.startKey = clickedKey;
+      }
+    } else {
+      cal.startKey = clickedKey;
+      cal.endKey = null;
+    }
+  } else {
+    cal.startKey = clickedKey;
+    cal.endKey = null;
+  }
+  renderCalendar("range");
+  applyCalendarFiltersFromSelection();
+}
+
+// Keyboard grid navigation: arrows move focus (roving tabindex), Enter/Space
+// select, Home/End jump within the visual week row. Attached once to the grid
+// container, which survives the innerHTML rebuilds (WP-21/JS-7).
+function onGridKeydown(evt) {
+  const cell = evt.target.closest && evt.target.closest(".calendar-day");
+  if (!cell || !calendarRange.contains(cell)) return;
+
+  if (evt.key === "Enter" || evt.key === " " || evt.key === "Spacebar" || evt.key === "Space") {
+    if (cell.classList.contains("disabled") || cell.classList.contains("other-month")) return;
+    evt.preventDefault();
+    activeCellKey = cell.dataset.key;
+    applyDaySelection(calendars.range, cell.dataset.key, evt.shiftKey);
+    focusActiveCell();
+    return;
+  }
+  if (!ARROW_KEYS.includes(evt.key)) return;
+  evt.preventDefault();
+
+  const focusable = Array.from(
+    calendarRange.querySelectorAll(".calendar-day:not(.other-month):not(.disabled)"),
+  );
+  const domIdx = focusable.indexOf(cell);
+  if (domIdx === -1) return;
+  const gridIdx = Number(cell.dataset.idx);
+  const row = Math.floor(gridIdx / 7);
+  const byGridIdx = (n) => focusable.find((b) => Number(b.dataset.idx) === n) || null;
+  let target = null;
+  switch (evt.key) {
+    case "ArrowRight":
+      target = focusable[domIdx + 1] || null;
+      break;
+    case "ArrowLeft":
+      target = focusable[domIdx - 1] || null;
+      break;
+    case "ArrowDown":
+      target = byGridIdx(gridIdx + 7);
+      break;
+    case "ArrowUp":
+      target = byGridIdx(gridIdx - 7);
+      break;
+    case "Home":
+      target = focusable.find((b) => Math.floor(Number(b.dataset.idx) / 7) === row) || null;
+      break;
+    case "End":
+      target =
+        [...focusable].reverse().find((b) => Math.floor(Number(b.dataset.idx) / 7) === row) || null;
+      break;
+    default:
+      break;
+  }
+  if (!target) return;
+  cell.tabIndex = -1;
+  target.tabIndex = 0;
+  activeCellKey = target.dataset.key;
+  target.focus();
+}
+
+function focusActiveCell() {
+  const active = calendarRange.querySelector(
+    `.calendar-day[data-key="${CSS.escape(activeCellKey)}"]`,
+  );
+  if (
+    active &&
+    !active.classList.contains("disabled") &&
+    !active.classList.contains("other-month")
+  ) {
+    active.focus();
   }
 }
 
@@ -340,6 +468,8 @@ export function initCalendar() {
       applyCalendarFiltersFromSelection();
     });
   });
+
+  if (calendarRange) calendarRange.addEventListener("keydown", onGridKeydown);
 
   if (selectMonthBtn) selectMonthBtn.addEventListener("click", selectVisibleMonthRange);
   if (dateFilterFrom) dateFilterFrom.addEventListener("input", onDateFilterChange);

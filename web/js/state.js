@@ -121,11 +121,22 @@ export function markCachedBadge(row, release) {
   }
 }
 
+// Update the read-state toggle button's visual + accessible state. The dot is a
+// real <button> (WP-21): it carries aria-pressed (seen) and a plain-language
+// name so the control is announced and operable, not an invisible click target.
+export function updateReadDot(dot, isRead) {
+  if (!dot) return;
+  dot.classList.toggle("read", isRead);
+  dot.setAttribute("aria-pressed", String(isRead));
+  const label = isRead ? "Mark as unseen" : "Mark as seen";
+  dot.setAttribute("aria-label", label);
+  dot.title = label;
+}
+
 // Single transition point for a row's read/unread presentation + state.
 export function setRowReadState(row, release, isRead) {
   if (row) {
-    const dot = row.querySelector(".row-dot");
-    if (dot) dot.classList.toggle("read", isRead);
+    updateReadDot(row.querySelector(".row-dot"), isRead);
     row.classList.toggle("unseen", !isRead);
   }
   setViewed(release, isRead);
@@ -173,10 +184,7 @@ export function markVisibleRows(viewed) {
       state.viewed.delete(key);
     }
     urls.push(release.url || key);
-    const dot = row.querySelector(".row-dot");
-    if (dot) {
-      dot.classList.toggle("read", viewed);
-    }
+    updateReadDot(row.querySelector(".row-dot"), viewed);
     row.classList.toggle("unseen", !viewed);
   });
   persistViewedBatchRemote(urls, viewed);
