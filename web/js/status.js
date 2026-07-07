@@ -8,23 +8,15 @@
 // general inline status-text primitive (setStatus). Toasts and banners live in
 // feedback.js; this module drives progress + the status line.
 
-import {
-  state,
-  releases,
-  scrapeStatus,
-  withinSelectedRange,
-  parseDateString,
-  isoKeyFromDate,
-} from "./state.js";
-import { isEnriched } from "./api.js";
+import { state, scrapeStatus, parseDateString, isoKeyFromDate } from "./state.js";
 import { isPopulating, updatePopulateButton } from "./populate.js";
+import { renderChip } from "./enrich.js";
 
 const loadingState = document.getElementById("loading-state");
 const errorState = document.getElementById("error-state");
 const populateLog = document.getElementById("populate-log");
 const headerRangeLabel = document.getElementById("header-range-label");
 const activityCount = document.getElementById("activity-count");
-const preloadBtn = document.getElementById("preload-range");
 
 const activityIcon = document.getElementById("activity-icon");
 const activityLine = document.getElementById("activity-line");
@@ -327,56 +319,11 @@ export function updateHeaderRange(count = null) {
       shown == null ? "" : `${shown} release${shown === 1 ? "" : "s"} shown`;
   }
 
-  const rangeReleases = releases.filter((r) => withinSelectedRange(r) && r.url);
-  const hasPendingPreload = rangeReleases.some((r) => !isEnriched(r));
-  const fromKey = state.dateFilterFrom || state.dateFilterTo || "";
-  const toKey = state.dateFilterTo || state.dateFilterFrom || "";
-  const hasScrapedRange =
-    scrapeStatus && scrapeStatus.scraped
-      ? (() => {
-          const rangeStart = parseDateString(fromKey);
-          const rangeEnd = parseDateString(toKey || fromKey);
-          if (!rangeStart || !rangeEnd) return false;
-          let cursor = new Date(rangeStart);
-          const last = new Date(rangeEnd);
-          while (cursor <= last) {
-            const key = isoKeyFromDate(cursor);
-            if (!scrapeStatus.scraped.has(key)) return false;
-            cursor.setDate(cursor.getDate() + 1);
-          }
-          return true;
-        })()
-      : false;
-  if (preloadBtn) {
-    // While the server is unreachable the preload button stays disabled with an
-    // explanation (UXP-20); the state owner still recomputes the correct copy
-    // on reconnect.
-    if (state.serverOffline) {
-      preloadBtn.disabled = true;
-      preloadBtn.textContent = "Preload release data";
-      preloadBtn.title = "bcfeed isn't running";
-    } else {
-      const fullyPreloaded = hasScrapedRange && rangeReleases.length > 0 && !hasPendingPreload;
-      const canPreload = hasScrapedRange && hasPendingPreload;
-      if (fullyPreloaded) {
-        preloadBtn.disabled = true;
-        preloadBtn.textContent = "Release data preloaded";
-        preloadBtn.title = "All embeds already cached for this range";
-      } else if (canPreload) {
-        preloadBtn.disabled = false;
-        preloadBtn.textContent = "Preload release data";
-        preloadBtn.title = "Fetch embed data for releases in this range";
-      } else if (!hasScrapedRange) {
-        preloadBtn.disabled = true;
-        preloadBtn.textContent = "Preload release data";
-        preloadBtn.title = "Populate this range before preloading embeds";
-      } else {
-        preloadBtn.disabled = true;
-        preloadBtn.textContent = "Preload release data";
-        preloadBtn.title = "Preload unavailable";
-      }
-    }
-  }
+  // The old "Preload release data" button is gone (WP-24 · UXP-8). Enrichment
+  // is an ambient background queue (enrich.js); the aggregate chip shows its
+  // progress + Pause and the low-key "Load all players" affordance. Recompute
+  // it whenever the selected range or the release set changes.
+  renderChip();
 
   // Keep the idle line coherent when the count changes (never mid-run).
   if (!isPopulating) renderIdleActivity(rangeCoverage());

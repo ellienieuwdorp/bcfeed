@@ -28,6 +28,13 @@ import {
 import { renderFilters } from "./filters.js";
 import { ensureEmbed } from "./api.js";
 import { updateHeaderRange } from "./status.js";
+import {
+  applyEnrichGlyph,
+  enrichRelease,
+  enrichStar,
+  noteEmbedResult,
+  isEnrichUnavailable,
+} from "./enrich.js";
 
 const tbody = document.getElementById("release-rows");
 const emptyState = document.getElementById("empty-state");
@@ -231,7 +238,7 @@ export function renderTable() {
           </td>
           <td><a class="link" href="${esc(safePageUrl)}" target="_blank" rel="noopener">${esc(release.page_name || "Unknown")}</a></td>
           <td><a class="link" href="${esc(safePageUrl)}" target="_blank" rel="noopener">${esc(release.artist || "—")}</a></td>
-          <td data-title-cell><a class="link" href="${esc(safeReleaseUrl)}" target="_blank" rel="noopener" data-title-link>${esc(release.title || "—")}</a>${state.showCachedBadges && release.embed_url ? ' <span class="cached-badge">Saved</span>' : ""}</td>
+          <td data-title-cell><a class="link" href="${esc(safeReleaseUrl)}" target="_blank" rel="noopener" data-title-link>${esc(release.title || "—")}</a><span class="enrich-glyph" data-enrich-glyph hidden></span>${state.showCachedBadges && release.embed_url ? ' <span class="cached-badge">Saved</span>' : ""}</td>
           <td>${esc(formatDate(release.date))}</td>
         `;
     const existingRead = state.viewed.has(key);
@@ -241,8 +248,12 @@ export function renderTable() {
       tr.classList.add("starred");
     }
     updateStarButton(tr.querySelector("[data-star-btn]"), state.starred.has(key));
-    if (state.starred.has(key)) {
-      ensureEmbed(release).then(() => markCachedBadge(tr, release));
+    // Per-row enrichment status glyph (WP-24 · UXP-9): ready / loading /
+    // unavailable, nothing when not yet fetched. A starred-but-unloaded release
+    // keeps its ambient enrichment (never re-hit once it is session-unavailable).
+    applyEnrichGlyph(tr, release);
+    if (state.starred.has(key) && !release.embed_url && !isEnrichUnavailable(release)) {
+      enrichRelease(release);
     }
     fragment.appendChild(tr);
   });
@@ -296,12 +307,16 @@ function expandRow(evt, tr, release, key) {
   ensureEmbed(release, { withDescription: true }).then((embedUrl) => {
     const safeEmbedUrl = safeHttpUrl(embedUrl);
     if (!safeEmbedUrl) {
-      embedTarget.innerHTML = `<div class="detail-meta">No embed available. Is the app still running? <br><a class="link" href="${esc(safeHttpUrl(release.url) || "#")}" target="_blank" rel="noopener">Open on Bandcamp</a>.</div>`;
+      // Failed / gone: the row glyph flips to "unavailable" and the detail row
+      // offers the Bandcamp fallback (UXP-9). It is never auto-retried.
+      embedTarget.innerHTML = `<div class="detail-meta">Couldn't load the player. <a class="link" href="${esc(safeHttpUrl(release.url) || "#")}" target="_blank" rel="noopener">Open on Bandcamp</a>.</div>`;
+      noteEmbedResult(release, null);
       return;
     }
     const frameClass = release.is_track ? "embed-frame is-track" : "embed-frame";
     embedTarget.innerHTML = `<iframe title="Bandcamp player" class="${frameClass}" src="${esc(safeEmbedUrl)}" seamless></iframe>`;
     markCachedBadge(tr, release);
+    noteEmbedResult(release, safeEmbedUrl);
     if (descTarget) {
       descTarget.textContent = release.description || "No description available.";
     }
@@ -310,10 +325,17 @@ function expandRow(evt, tr, release, key) {
 
 const preloadTimers = new WeakMap();
 function schedulePreloadFor(tr, release) {
+  // Never auto-retry a release that already failed this session (UXP-9): the
+  // hover-prefetch is an automatic path, so it must respect the negative cache
+  // both when scheduling and when the debounced timer fires (a release can
+  // become unavailable between the two).
+  if (isEnrichUnavailable(release)) return;
   cancelPreloadFor(tr);
   preloadTimers.set(
     tr,
-    setTimeout(() => ensureEmbed(release), 200),
+    setTimeout(() => {
+      if (!isEnrichUnavailable(release)) ensureEmbed(release);
+    }, 200),
   );
 }
 function cancelPreloadFor(tr) {
@@ -336,6 +358,8 @@ function attachTbodyDelegation() {
       evt.stopPropagation();
       const next = !state.starred.has(key);
       setStarred(release, next, { row: tr, button: tr.querySelector("[data-star-btn]") });
+      // Star jumps the release to the front of the enrichment queue (UXP-8).
+      if (next) enrichStar(release);
       return;
     }
     if (evt.target.closest("[data-marker-cell]")) {
@@ -389,6 +413,7 @@ function attachTbodyDelegation() {
       evt.preventDefault();
       const next = !state.starred.has(key);
       setStarred(release, next, { row: tr, button: tr.querySelector("[data-star-btn]") });
+      if (next) enrichStar(release);
     }
   });
 

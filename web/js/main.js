@@ -22,7 +22,7 @@ import {
   updateHeaderRange,
   toggleDetails,
 } from "./status.js";
-import { renderTable, refreshToggleButtons, initTable } from "./table.js";
+import { renderTable, refreshToggleButtons, initTable, restoreExpandedRow } from "./table.js";
 import {
   renderCalendar,
   initCalendar,
@@ -31,6 +31,7 @@ import {
 } from "./calendar.js";
 import { initModals } from "./modals.js";
 import { initPopulate, updatePopulateButton } from "./populate.js";
+import { initEnrich, setEnrichRenderHook, renderChip } from "./enrich.js";
 import { initSettings } from "./settings.js";
 import { initOnboarding, refreshOnboarding } from "./onboarding.js";
 import { showToast, showBanner, dismissBanner, setControlsOffline } from "./feedback.js";
@@ -74,16 +75,19 @@ function initTheme() {
   }
 }
 
-function forceCachedForNonDev() {
+// WP-24 · UI-13/UXP-9: the "Saved" badge leaves the DEFAULT view — the per-row
+// enrichment glyph now carries "player ready". The badge + its toggle survive as
+// a dev-only affordance, so non-dev users get it off by construction.
+function defaultCachedOffForNonDev() {
   if (config.showDevSettings) return;
-  state.showCachedBadges = true;
+  state.showCachedBadges = false;
   try {
-    localStorage.setItem(SHOW_CACHED_KEY, "true");
+    localStorage.setItem(SHOW_CACHED_KEY, "false");
   } catch (e) {
     // storage may be unavailable; state default already covers it
   }
   const cachedToggle = document.getElementById("show-cached-toggle");
-  if (cachedToggle) cachedToggle.checked = true;
+  if (cachedToggle) cachedToggle.checked = false;
 }
 
 function initChrome() {
@@ -181,13 +185,21 @@ async function main() {
 
   applyDevSettingsVisibility();
   initTheme();
-  forceCachedForNonDev();
+  defaultCachedOffForNonDev();
+
+  // The ambient enrichment queue re-renders the table when it settles; give it
+  // that hook so enrich.js need not import table.js at module load.
+  setEnrichRenderHook(() => {
+    renderTable();
+    restoreExpandedRow();
+  });
 
   initModals();
   initTable();
   initSettings();
   initPopulate();
   initCalendar();
+  initEnrich();
   initOnboarding();
   initChrome();
 
@@ -200,6 +212,7 @@ async function main() {
       setControlsOffline(true);
       updatePopulateButton();
       updateHeaderRange();
+      renderChip();
       showBanner(
         "server-down",
         "bcfeed isn't running. Start it from Terminal — this page reconnects on its own.",
@@ -213,6 +226,7 @@ async function main() {
       updatePopulateButton();
       updateHeaderRange();
       refreshToggleButtons();
+      renderChip();
       showToast("Reconnected.", { kind: "success" });
     },
   });

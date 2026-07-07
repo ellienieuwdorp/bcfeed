@@ -146,12 +146,11 @@
                 <div class="action-group">
                   <div class="selected-range-label">Selected dates</div>
                   <div class="calendar-summary" id="calendar-summary"></div>
-                  <button id="populate-range" class="button populate-button">
-                    Populate release list
-                  </button>
-                  <button id="preload-range" class="button preload-btn">
-                    Preload release data
-                  </button>
+                  <button id="populate-range" class="button populate-button">Get releases</button>
+                  <p class="up-to-date-line" id="up-to-date-line" hidden>
+                    <svg class="icon" aria-hidden="true"><use href="#icon-check-circle"></use></svg>
+                    Up to date for these dates
+                  </p>
                   <button id="mark-seen" class="button button-compact">Mark as seen</button>
                   <button id="mark-unseen" class="button button-compact">Mark as unseen</button>
                 </div>
@@ -385,6 +384,22 @@
             </button>
           </div>
           <div id="populate-log" class="activity-detail full-width" hidden></div>
+          <!-- Enrichment chip (WP-24 · UXP-9): while the ambient background
+               queue loads Bandcamp players it shows aggregate progress + a
+               Pause control; when idle-with-pending it offers the low-key
+               "Load all players" bulk affordance. Hidden when nothing to do. -->
+          <div class="enrich-chip" id="enrich-chip" role="status" aria-live="polite" hidden>
+            <svg class="icon enrich-chip-icon" id="enrich-chip-icon" aria-hidden="true">
+              <use href="#icon-loader"></use>
+            </svg>
+            <span class="enrich-chip-label" id="enrich-chip-label"></span>
+            <button type="button" id="enrich-pause" class="button button-compact" hidden>
+              Pause
+            </button>
+            <button type="button" id="enrich-load-all" class="button button-compact" hidden>
+              Load all players
+            </button>
+          </div>
         </div>
       </main>
     </div>
@@ -407,14 +422,9 @@
                 <input type="checkbox" id="theme-toggle" class="filter-checkbox show" />
                 <label for="theme-toggle">Dark mode</label>
               </div>
-              <div class="settings-row">
-                <input
-                  type="checkbox"
-                  id="show-cached-toggle"
-                  class="filter-checkbox show"
-                  checked
-                />
-                <label for="show-cached-toggle">Show cached badges</label>
+              <div class="settings-row dev-setting">
+                <input type="checkbox" id="show-cached-toggle" class="filter-checkbox show" />
+                <label for="show-cached-toggle">Show 'player ready' tags</label>
               </div>
             </div>
           </div>

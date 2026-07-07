@@ -670,6 +670,23 @@ details[open] .panel-carat {
   font-size: var(--text-xs);
   color: var(--text-muted);
 }
+/* "Up to date" confirmation shown in place of a dead-end disabled button
+   (WP-24 · UXP-11); the primary control becomes "Check again" alongside it. */
+.up-to-date-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--success-text);
+}
+.up-to-date-line[hidden] {
+  display: none;
+}
+.up-to-date-line .icon {
+  width: 14px;
+  height: 14px;
+}
 
 /* ===== Filter list ===== */
 .filter-list {
@@ -887,6 +904,40 @@ tr.data-row:hover .row-dot.read {
 .star-btn.starred svg {
   fill: var(--star);
   stroke: var(--star);
+}
+
+/* Per-row enrichment glyph (WP-24 · UXP-9 / UI-13): the quiet channel that
+   replaced the shouting CACHED badge. ready = subtle check, loading = spinner,
+   unavailable = muted alert. Nothing shows for a not-yet-fetched release. */
+.enrich-glyph {
+  display: inline-flex;
+  align-items: center;
+  margin-left: var(--space-2);
+  vertical-align: middle;
+}
+.enrich-glyph[hidden] {
+  display: none;
+}
+.enrich-glyph .icon {
+  width: 14px;
+  height: 14px;
+}
+.enrich-glyph.is-ready {
+  color: var(--success-text);
+}
+.enrich-glyph.is-loading {
+  color: var(--text-muted);
+}
+.enrich-glyph.is-loading .icon {
+  animation: bc-spin 1s linear infinite;
+}
+.enrich-glyph.is-unavailable {
+  color: var(--text-faint);
+}
+@media (prefers-reduced-motion: reduce) {
+  .enrich-glyph.is-loading .icon {
+    animation: none;
+  }
 }
 
 /* Saved badge — a quiet 6px rectangle, hidden by default via the setting */
@@ -1117,6 +1168,44 @@ tr.data-row:hover .row-dot.read {
   font-variant-numeric: tabular-nums;
 }
 
+/* Enrichment chip (WP-24 · UXP-9): aggregate queue progress + Pause, and the
+   low-key "Load all players" bulk affordance. Spans the strip's full width. */
+.enrich-chip {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+.enrich-chip[hidden] {
+  display: none;
+}
+/* `.button { display: inline-flex }` outranks the UA [hidden] rule, so a hidden
+   chip control needs an explicit author-level hide (same pattern as the idle
+   activity icon). */
+.enrich-chip .button[hidden] {
+  display: none;
+}
+.enrich-chip-icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--text-muted);
+}
+.enrich-chip-icon.spinning {
+  animation: bc-spin 1s linear infinite;
+}
+.enrich-chip-label {
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+@media (prefers-reduced-motion: reduce) {
+  .enrich-chip-icon.spinning {
+    animation: none;
+  }
+}
+
 @keyframes bc-spin {
   to {
     transform: rotate(360deg);
@@ -1300,7 +1389,6 @@ tr.data-row.row-added.unseen {
 
 /* Offline: quiet the mutating controls the JS also disables (UXP-20). */
 body.is-offline .populate-button,
-body.is-offline .preload-btn,
 body.is-offline #mark-seen,
 body.is-offline #mark-unseen {
   opacity: 0.6;
