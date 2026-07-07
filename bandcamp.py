@@ -416,6 +416,26 @@ def _store_embed_record(url: str, record: dict) -> None:
     json_store.update_json(paths.EMBED_CACHE_PATH, mutator, {}, indent=2)
 
 
+def store_embed_records(records: dict[str, dict]) -> None:
+    """Merge many embed records into the cache in ONE locked write (PERF-3).
+
+    The WP-17 preload job flushes its results through here every
+    ``PRELOAD_FLUSH_EVERY`` items instead of rewriting the whole cache once
+    per release, so an n-item run costs O(cache × n/10) bytes, not
+    O(cache × n).
+    """
+    if not records:
+        return
+
+    def mutator(cache):
+        if not isinstance(cache, dict):
+            cache = {}
+        cache.update(records)
+        return cache
+
+    json_store.update_json(paths.EMBED_CACHE_PATH, mutator, {}, indent=2)
+
+
 def _cached_record(url: str, now: float) -> dict | None:
     """Return the cached record for ``url`` if it is still authoritative.
 
@@ -435,18 +455,16 @@ def _cached_record(url: str, now: float) -> dict | None:
     return record
 
 
-def get_embed_meta(url: str, *, now: float | None = None) -> dict:
-    """Cache-first embed metadata for one release URL.
+def fetch_embed_record(url: str, *, now: float | None = None) -> dict:
+    """Fetch and parse one release page into an embed record — NO cache write.
 
-    Returns the embed record (see module docstring). Consults the cache first;
-    on a miss (or an expired negative record) fetches the page once, parses it,
-    records the outcome — success or failure — and returns the new record.
+    Raises ``FetchBlockedError`` for a disallowed URL (never fetched, never
+    cached); every other outcome — success, HTTP error, network failure — is
+    returned as a record. Callers own persistence: ``get_embed_meta`` stores
+    one record immediately, the WP-17 preload job batches records through
+    ``store_embed_records``.
     """
     now = time.time() if now is None else now
-    record = _cached_record(url, now)
-    if record is not None:
-        return record
-
     try:
         html_text = fetch_release_page(url)
     except FetchBlockedError:
@@ -458,30 +476,155 @@ def get_embed_meta(url: str, *, now: float | None = None) -> dict:
         status_code = getattr(getattr(exc, "response", None), "status_code", None)
         code = f"http_{status_code}" if status_code else "network"
         logger.warning("Fetching Bandcamp page failed (%s): %s", code, url)
-        record = {"status": "error", "code": code, "fetched_at": int(now)}
-    else:
-        # ONE soup per page, shared by every extractor (PERF-3 parse-once).
-        soup = BeautifulSoup(html_text, "html.parser")
-        data = extract_bc_meta(soup)
-        if not data:
-            # bc-page-properties is required before an ok record is cached
-            # (ARC-5f step 5): a non-release page never enriches the cache.
-            record = {"status": "error", "code": "no_meta", "fetched_at": int(now)}
-        else:
-            item_id = data.get("item_id")
-            is_track = data.get("item_type") in ("track", "t")
-            # embed_url is deliberately NOT stored (LOG-20): consumers derive
-            # it from release_id + is_track via build_embed_url.
-            record = {
-                "status": "ok",
-                "release_id": item_id,
-                "is_track": is_track,
-                "description": extract_bandcamp_description(soup) or "",
-                "fetched_at": int(now),
-            }
-            art_url = extract_art_url(soup)
-            if art_url:
-                record["art_url"] = art_url
+        return {"status": "error", "code": code, "fetched_at": int(now)}
 
+    # ONE soup per page, shared by every extractor (PERF-3 parse-once).
+    soup = BeautifulSoup(html_text, "html.parser")
+    data = extract_bc_meta(soup)
+    if not data:
+        # bc-page-properties is required before an ok record is cached
+        # (ARC-5f step 5): a non-release page never enriches the cache.
+        return {"status": "error", "code": "no_meta", "fetched_at": int(now)}
+    item_id = data.get("item_id")
+    is_track = data.get("item_type") in ("track", "t")
+    # embed_url is deliberately NOT stored (LOG-20): consumers derive it from
+    # release_id + is_track via build_embed_url.
+    record = {
+        "status": "ok",
+        "release_id": item_id,
+        "is_track": is_track,
+        "description": extract_bandcamp_description(soup) or "",
+        "fetched_at": int(now),
+    }
+    art_url = extract_art_url(soup)
+    if art_url:
+        record["art_url"] = art_url
+    return record
+
+
+def get_embed_meta(url: str, *, now: float | None = None) -> dict:
+    """Cache-first embed metadata for one release URL.
+
+    Returns the embed record (see module docstring). Consults the cache first;
+    on a miss (or an expired negative record) fetches the page once, parses it,
+    records the outcome — success or failure — and returns the new record.
+    """
+    now = time.time() if now is None else now
+    record = _cached_record(url, now)
+    if record is not None:
+        return record
+    record = fetch_embed_record(url, now=now)
     _store_embed_record(url, record)
     return record
+
+
+# ---------------------------------------------------------------------------
+# Preload job (WP-17 · LOG-6/PERF-3): worker pool behind /preload-range-stream
+# ---------------------------------------------------------------------------
+# Small pool: enough parallelism to hide latency, few enough that the shared
+# token bucket (not the pool size) is what bounds Bandcamp traffic to ~1 rps.
+PRELOAD_WORKER_COUNT = 3
+# Batched cache flush size (PERF-3): results are persisted every N completions
+# (plus once at the end), never one whole-cache rewrite per release.
+PRELOAD_FLUSH_EVERY = 10
+
+
+def run_preload_job(
+    items: list[tuple[str, str]],
+    *,
+    emit,
+    cancel_event: threading.Event,
+    worker_count: int | None = None,
+    flush_every: int | None = None,
+    now: float | None = None,
+) -> dict:
+    """Enrich ``items`` (``(canonical_url, label)`` pairs) with a worker pool.
+
+    Every fetch goes through ``fetch_release_page`` — the WP-12 polite fetcher
+    — so the shared token bucket keeps global Bandcamp traffic at ~1 req/s no
+    matter how many workers run. URLs that already have a fresh record
+    (positive, or negative within its retry TTL) are skipped without a fetch,
+    which is what makes an interrupted run resumable: re-running skips
+    everything already recorded (LOG-6 — no job state beyond the cache).
+
+    ``emit(text, current=..., total=..., level=...)`` receives one progress
+    line per completed fetch. Setting ``cancel_event`` stops the scheduling of
+    new fetches; in-flight ones finish and their results are persisted.
+
+    Returns ``{"ok", "failed", "skipped", "total", "cancelled"}`` with
+    ``ok + failed + skipped == total`` — skipped counts both already-recorded
+    URLs and candidates never attempted because of a cancel.
+    """
+    # Module globals resolved at call time so tests can tune them (the
+    # keyword defaults exist for direct callers).
+    worker_count = PRELOAD_WORKER_COUNT if worker_count is None else worker_count
+    flush_every = PRELOAD_FLUSH_EVERY if flush_every is None else flush_every
+    now = time.time() if now is None else now
+    total = len(items)
+    to_fetch = [(url, label) for url, label in items if _cached_record(url, now) is None]
+    already_recorded = total - len(to_fetch)
+
+    state = {"next": 0, "done": 0, "ok": 0, "failed": 0}
+    state_lock = threading.Lock()
+    pending_records: dict[str, dict] = {}
+
+    def _flush_locked() -> None:
+        # Called with state_lock held; store_embed_records does ONE locked
+        # cache write for the whole batch.
+        if pending_records:
+            store_embed_records(dict(pending_records))
+            pending_records.clear()
+
+    def _work() -> None:
+        while True:
+            with state_lock:
+                # Cancel gate: checked before every schedule, so a cancel
+                # stops the pool within each worker's one in-flight request.
+                if cancel_event.is_set() or state["next"] >= len(to_fetch):
+                    return
+                index = state["next"]
+                state["next"] += 1
+            url, label = to_fetch[index]
+            try:
+                record = fetch_embed_record(url)
+            except FetchBlockedError:
+                # Never cached (ARC-5f); counted as a failure for the run.
+                record = None
+            ok = bool(record) and record.get("status") == "ok"
+            with state_lock:
+                if record is not None:
+                    pending_records[url] = record
+                state["done"] += 1
+                state["ok" if ok else "failed"] += 1
+                done = state["done"]
+                if len(pending_records) >= flush_every:
+                    _flush_locked()
+            if ok:
+                emit(f"Loaded details for {label}", current=done, total=len(to_fetch))
+            else:
+                emit(
+                    f"Couldn't load details for {label}",
+                    current=done,
+                    total=len(to_fetch),
+                    level="warn",
+                )
+
+    workers = [
+        threading.Thread(target=_work, daemon=True)
+        for _ in range(max(1, min(worker_count, len(to_fetch))))
+        if to_fetch
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join()
+
+    with state_lock:
+        _flush_locked()
+        return {
+            "ok": state["ok"],
+            "failed": state["failed"],
+            "skipped": already_recorded + (len(to_fetch) - state["done"]),
+            "total": total,
+            "cancelled": cancel_event.is_set(),
+        }

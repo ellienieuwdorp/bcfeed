@@ -257,6 +257,23 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
       notePersistFailure();
     }
   }
+  // WP-17 · PERF-1/JS-11: bulk mark-seen persists through ONE batch request
+  // (the server applies it in one store write) instead of one POST per row.
+  async function persistViewedBatchRemote(urls, viewed) {
+    if (!apiRoot || !urls.length) return;
+    try {
+      const resp = await fetch(`${apiRoot}/viewed-state/batch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ urls, viewed }),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      persistFailureNoted = false;
+    } catch (err) {
+      console.warn("Failed to persist viewed state batch to API", err);
+      notePersistFailure();
+    }
+  }
   async function persistStarredRemote(url, starred) {
     if (!starredApi || !url) return;
     try {
@@ -577,8 +594,7 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
   function isEnriched(release) {
     return Boolean(
       release.embed_url &&
-        (typeof release.has_description === "boolean" ||
-          typeof release.description === "string"),
+      (typeof release.has_description === "boolean" || typeof release.description === "string"),
     );
   }
 
@@ -589,8 +605,8 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
     // request needed to know there is nothing to show.
     const needsDescription = Boolean(
       opts.withDescription &&
-        release.description === undefined &&
-        release.has_description !== false,
+      release.description === undefined &&
+      release.has_description !== false,
     );
     if (release.embed_url && !needsDescription) {
       return release.embed_url;
@@ -1310,18 +1326,28 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
   }
 
   function markVisibleRows(viewed) {
+    // WP-17 · PERF-1/JS-11/ARCH-6: mutate local state per row, then persist
+    // the whole batch with ONE request — never one POST (and one calendar
+    // rebuild via setViewed) per visible row.
     const rows = Array.from(document.querySelectorAll("#release-rows tr.data-row"));
+    const urls = [];
     rows.forEach((row) => {
       const key = row.dataset.key;
       const release = key ? releaseMap.get(key) : null;
       if (!release) return;
-      setViewed(release, viewed);
+      if (viewed) {
+        state.viewed.add(key);
+      } else {
+        state.viewed.delete(key);
+      }
+      urls.push(release.url || key);
       const dot = row.querySelector(".row-dot");
       if (dot) {
         dot.classList.toggle("read", viewed);
       }
       row.classList.toggle("unseen", !viewed);
     });
+    persistViewedBatchRemote(urls, viewed);
     if (state.hideViewed) {
       state.hideViewedSnapshot = new Set(state.viewed);
     }
@@ -1746,58 +1772,82 @@ window.BC_CONFIG_PROMISE = fetch("config.json", { cache: "no-store" })
   if (populateBtn)
     populateBtn.addEventListener("click", () => populateRangeFromCalendars(populateBtn));
 
-  async function preloadEmbedsForRange() {
-    if (!embedProxyUrl) {
-      alert("Embed proxy not configured.");
-      return;
-    }
+  // WP-17 · LOG-6: enrichment now runs server-side. The former serial
+  // per-release loop (one /embed-meta await per row, ~1 s each) is gone;
+  // this opens /preload-range-stream and consumes the typed events minimally
+  // — progress lines into the existing status log. The real enrichment UI
+  // lands with WP-24.
+  function preloadEmbedsForRange() {
     checkServerAlive();
     applyCalendarFiltersFromSelection();
+    let startVal = dateFilterFrom ? dateFilterFrom.value.trim() : "";
+    let endVal = dateFilterTo ? dateFilterTo.value.trim() : "";
+    if (startVal && !endVal) endVal = startVal;
+    if (endVal && !startVal) startVal = endVal;
+    if (!apiRoot || !startVal || !endVal) return;
+    if (!window.EventSource) {
+      alert("Loading release details requires EventSource support. Please use a modern browser.");
+      return;
+    }
     const btn = preloadBtn;
     const original = btn ? btn.textContent : "";
     if (btn) {
       btn.disabled = true;
-      btn.textContent = "Preloading…";
+      btn.textContent = "Loading players…";
     }
-    const candidates = releases
-      .filter((r) => withinSelectedRange(r))
-      .filter((r) => r.url)
-      .filter((r) => !isEnriched(r));
-    const total = candidates.length;
     if (populateLog) {
       populateLog.style.color = "";
-      populateLog.textContent = total
-        ? `Preloading embeds for ${total} releases…`
-        : "Nothing to preload for this range.";
-      populateLog.scrollTop = populateLog.scrollHeight;
+      populateLog.textContent = "";
     }
-    let success = 0;
-    let failures = 0;
-    for (let i = 0; i < candidates.length; i++) {
-      const release = candidates[i];
-      const label = `${release.title || release.url || "Release"}`;
-      appendPopulateLogLine(`(${i + 1}/${total}) ${label}`);
-      try {
-        const embedUrl = await ensureEmbed(release);
-        if (embedUrl) {
-          success += 1;
-        } else {
-          failures += 1;
-          appendPopulateLogLine(`    No embed found for ${label}`);
-        }
-      } catch (err) {
-        failures += 1;
-        appendPopulateLogLine(`    Error for ${label}: ${err}`);
+    const url = `${apiRoot}/preload-range-stream?start=${encodeURIComponent(startVal)}&end=${encodeURIComponent(endVal)}`;
+    const es = new EventSource(url);
+    let finished = false;
+    const finishRun = () => {
+      if (finished) return;
+      finished = true;
+      es.close();
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = original || "Preload release data";
       }
-    }
-    appendPopulateLogLine(
-      `Preload complete. Cached: ${success}/${total}${failures ? `, failed: ${failures}` : ""}.`,
-    );
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = original || "Preload release data";
-    }
-    renderTable();
+    };
+    es.onmessage = (ev) => {
+      const data = parseSseData(ev && ev.data);
+      if (!data || data.v !== 1) return;
+      if (typeof data.text === "string") appendPopulateLogLine(data.text);
+    };
+    es.addEventListener("error", (ev) => {
+      const data = parseSseData(ev && ev.data);
+      if (!data) {
+        // Connection-level blip: only a typed `event: error` payload is
+        // terminal (JS-10); EventSource reconnects on its own otherwise.
+        if (es.readyState === EventSource.CLOSED && !finished) {
+          finishRun();
+          appendPopulateLogLine("Lost the connection to the app.");
+          checkServerAlive();
+        }
+        return;
+      }
+      finishRun();
+      appendPopulateLogLine(data.message || "Couldn't load release details.");
+    });
+    es.addEventListener("done", async (ev) => {
+      const data = parseSseData(ev && ev.data) || {};
+      finishRun();
+      const ok = Number(data.ok) || 0;
+      const failed = Number(data.failed) || 0;
+      const parts = [`Loaded details for ${ok} release${ok === 1 ? "" : "s"}`];
+      if (failed) parts.push(`${failed} couldn't be loaded`);
+      if (data.cancelled) parts.push("stopped early");
+      appendPopulateLogLine(`${parts.join("; ")}.`);
+      try {
+        await fetchReleases();
+      } catch (err) {
+        console.warn("Failed to refresh releases after loading details", err);
+      }
+      renderTable();
+      restoreExpandedRow();
+    });
   }
 
   function setDefaultDateFilters() {

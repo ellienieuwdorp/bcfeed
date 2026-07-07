@@ -19,7 +19,13 @@ from werkzeug.serving import WSGIRequestHandler, make_server
 import docs_render
 import json_store
 import migrations
-from bandcamp import FetchBlockedError, build_embed_url, embed_cache_snapshot, get_embed_meta
+from bandcamp import (
+    FetchBlockedError,
+    build_embed_url,
+    embed_cache_snapshot,
+    get_embed_meta,
+    run_preload_job,
+)
 from credential_store import (
     CredentialStoreError,
     has_imap_password,
@@ -66,7 +72,7 @@ from provider_factory import (
 from provider_factory import (
     open_imap_client as _open_imap_client,
 )
-from session_store import get_full_release_cache, scrape_status_for_range
+from session_store import cached_releases_for_range, get_full_release_cache, scrape_status_for_range
 from util import canonical_release_url, parse_date
 from util import today as _today
 
@@ -160,6 +166,25 @@ def _set_url_flag(path: Path, url: str, flagged: bool) -> None:
     json_store.update_json(path, mutator, [])
 
 
+def _set_url_flags(path: Path, urls: list[str], flagged: bool) -> None:
+    """Add/remove MANY URLs in a set-store with one lock + one write (PERF-1).
+
+    The whole batch is a single load-mutate-save cycle under the store's
+    json_store lock, so a bulk mark-seen is one write instead of N racing
+    read-modify-rewrite cycles (ARCH-6 enabler).
+    """
+
+    def mutator(data):
+        items = set(data) if isinstance(data, list) else set()
+        if flagged:
+            items.update(urls)
+        else:
+            items.difference_update(urls)
+        return sorted(items)
+
+    json_store.update_json(path, mutator, [])
+
+
 def _load_viewed() -> set[str]:
     return _load_url_set(VIEWED_PATH)
 
@@ -229,6 +254,31 @@ def viewed_state():
     # release URL toggles the same row's state.
     _set_url_flag(VIEWED_PATH, canonical_release_url(url) or url, read)
     return jsonify({"ok": True})
+
+
+@app.route("/viewed-state/batch", methods=["POST"])
+def viewed_state_batch():
+    """Mark many URLs seen/unseen in ONE store write (WP-17 · PERF-1/ARCH-6).
+
+    Body: ``{urls: [...], viewed: bool}``. Replaces the dashboard's former
+    N individual POSTs for bulk mark-seen: one lock acquisition, one write,
+    so concurrent single toggles can never interleave mid-batch and lose
+    marks. CSRF-guarded like every mutation (WP-08 before_request header
+    check). Each URL is canonicalized (LOG-9) before it is stored.
+    """
+    data = request.get_json(silent=True) or {}
+    urls = data.get("urls")
+    viewed = data.get("viewed")
+    if (
+        not isinstance(urls, list)
+        or not urls
+        or not all(isinstance(u, str) and u for u in urls)
+        or not isinstance(viewed, bool)
+    ):
+        return jsonify({"error": "Missing urls or viewed flag"}), 400
+    canonical = [canonical_release_url(u) or u for u in urls]
+    _set_url_flags(VIEWED_PATH, canonical, viewed)
+    return jsonify({"ok": True, "count": len(canonical)})
 
 
 @app.route("/releases", methods=["GET"])
@@ -794,6 +844,183 @@ def populate_range_stream():
             # failed run can never be followed by `event: done`.
             yield f"event: {kind}\ndata: {data}\n\n"
             break
+
+    headers = {"Cache-Control": "no-cache"}
+    return Response(
+        stream_with_context(event_stream()), mimetype="text/event-stream", headers=headers
+    )
+
+
+# --- Preload job (WP-17 · LOG-6/PERF-3) --------------------------------------
+# GET /preload-range-stream?start&end — SSE, same typed protocol as
+# /populate-range-stream (WP-10): progress events are
+# {v:1, phase:"enrich", current, total, message, level, text}; the single
+# terminal event is `event: done` with {ok, failed, skipped, total, cancelled}
+# or `event: error` with {code, message} (code "busy" when a run is already
+# active). The worker enriches every release in the range that has no fresh
+# embed record, through bandcamp.run_preload_job: 2-3 workers, all paced by
+# the WP-12 shared token bucket, results flushed in batches of ~10.
+#
+# Locking: PRELOAD_LOCK is its own non-reentrant lock, separate from
+# POPULATE_LOCK — a preload and a populate MAY run concurrently by design:
+# they write disjoint stores (embed_cache.json vs release_cache.json +
+# scrape_status.json), each through json_store's per-path locks, so they
+# cannot corrupt each other. Like POPULATE_LOCK (WP-05), the lock's lifetime
+# is the worker's, not the SSE generator's: a client disconnect never
+# releases it early.
+#
+# Cancel: POST /preload-cancel (or a client disconnect tearing down the SSE
+# generator) sets the active job's cancel event — no new fetches are
+# scheduled, in-flight ones finish and are persisted, and the terminal done
+# event carries the accurate counts.
+PRELOAD_LOCK = threading.Lock()
+
+_preload_state_guard = threading.Lock()
+_active_preload_cancel: threading.Event | None = None
+
+
+def _set_active_preload_cancel(
+    event: threading.Event | None, *, if_current: threading.Event | None = None
+) -> None:
+    """Swap the active job's cancel event (guarded; worker + route share it)."""
+    global _active_preload_cancel
+    with _preload_state_guard:
+        if if_current is not None and _active_preload_cancel is not if_current:
+            return
+        _active_preload_cancel = event
+
+
+@app.route("/preload-cancel", methods=["POST"])
+def preload_cancel():
+    """Ask the active preload job to stop scheduling new fetches."""
+    with _preload_state_guard:
+        event = _active_preload_cancel
+        if event is not None:
+            event.set()
+    return jsonify({"ok": True, "cancelling": event is not None})
+
+
+# Like the populate stream, this endpoint is a plain GET (EventSource cannot
+# set headers); it is protected by the before_request Host check and only
+# adds to the local embed cache.
+@app.route("/preload-range-stream", methods=["GET"])
+def preload_range_stream():
+    start_arg = request.args.get("start")
+    end_arg = request.args.get("end") or start_arg
+
+    def error_stream(code: str, message: str):
+        payload = encode_event_payload({"code": code, "message": message})
+
+        def gen():
+            yield f"event: error\ndata: {payload}\n\n"
+
+        headers = {"Cache-Control": "no-cache"}
+        app.logger.error(message)
+        return Response(stream_with_context(gen()), mimetype="text/event-stream", headers=headers)
+
+    if not start_arg or not end_arg:
+        return error_stream("internal", "Missing start/end")
+    start = parse_date(start_arg, allow_none=True)
+    end = parse_date(end_arg, allow_none=True)
+    if not start or not end or start > end:
+        return error_stream("internal", "Invalid start/end")
+
+    if not PRELOAD_LOCK.acquire(blocking=False):
+        return error_stream("busy", "Release details are already being loaded.")
+
+    cancel_event = threading.Event()
+    _set_active_preload_cancel(cancel_event)
+
+    # Queue items: ("message", payload) progress events, then exactly one
+    # terminal ("done"|"error", payload), then a None sentinel (WP-10 shape).
+    q: SimpleQueue[tuple[str, dict] | None] = SimpleQueue()
+
+    def emit(text, *, current=None, total=None, level="info"):
+        q.put(
+            (
+                "message",
+                {
+                    "v": 1,
+                    "phase": "enrich",
+                    "current": current,
+                    "total": total,
+                    "message": str(text),
+                    "level": level,
+                    "text": str(text),
+                },
+            )
+        )
+
+    def worker():
+        # Owns PRELOAD_LOCK for its whole lifetime (WP-05 pattern): the SSE
+        # generator below may be torn down by a disconnect while this thread
+        # keeps working, so the lock is released here, never there.
+        try:
+            releases, _missing = cached_releases_for_range(start, end)
+            items: list[tuple[str, str]] = []
+            seen: set[str] = set()
+            for rel in releases:
+                url = canonical_release_url(rel.get("url"))
+                if not url or url in seen:
+                    continue
+                seen.add(url)
+                label = " – ".join(part for part in (rel.get("artist"), rel.get("title")) if part)
+                items.append((url, label or url))
+            emit(
+                f"Loading details for {len(items)} releases…"
+                if items
+                else "No releases to load details for in these dates.",
+                current=0,
+                total=len(items),
+            )
+            summary = run_preload_job(items, emit=emit, cancel_event=cancel_event)
+            if summary["cancelled"]:
+                emit("Stopped loading release details.")
+            q.put(("done", summary))
+        except Exception:
+            app.logger.exception("Release-details worker failed")
+            q.put(
+                (
+                    "error",
+                    {
+                        "code": "internal",
+                        "message": "Couldn't load release details. See the server log for details.",
+                    },
+                )
+            )
+        finally:
+            _set_active_preload_cancel(None, if_current=cancel_event)
+            PRELOAD_LOCK.release()
+            q.put(None)
+
+    # Start the worker before handing the response back: its lifetime (and
+    # the lock's) must not depend on whether the client ever reads the stream.
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+
+    def event_stream():
+        try:
+            while True:
+                item = q.get()
+                if item is None:
+                    # Safety net: the worker exited without a terminal event.
+                    payload = encode_event_payload(
+                        {"code": "internal", "message": "The run ended unexpectedly."}
+                    )
+                    yield f"event: error\ndata: {payload}\n\n"
+                    break
+                kind, payload = item
+                data = encode_event_payload(payload)
+                if kind == "message":
+                    yield f"data: {data}\n\n"
+                    continue
+                yield f"event: {kind}\ndata: {data}\n\n"
+                break
+        finally:
+            # Generator teardown = the client is gone (EventSource closed or
+            # the tab died): stop scheduling new fetches. After a normal
+            # terminal event this is a no-op — the job has already finished.
+            cancel_event.set()
 
     headers = {"Cache-Control": "no-cache"}
     return Response(
