@@ -447,10 +447,26 @@ export function setDefaultDateFilters() {
     .filter(Boolean)
     .sort((a, b) => a - b);
   if (!dates.length) return;
-  const first = isoKeyFromDate(dates[0]);
-  const last = isoKeyFromDate(dates[dates.length - 1]);
-  if (dateFilterFrom && !dateFilterFrom.value) dateFilterFrom.value = first;
-  if (dateFilterTo && !dateFilterTo.value) dateFilterTo.value = last;
+  // PERF-4: the default filter is the MOST RECENT MONTH of data, not the whole
+  // library (min→max). Defaulting to the entire span built every row on first
+  // paint (5,000 rows × 8 listeners each at a 5k library) — the audit's slow
+  // first paint. A single month keeps the default view to that month's rows;
+  // the user widens the range normally afterward.
+  //
+  // An explicit saved calendar selection still wins: loadCalendarState()
+  // populates the date inputs from localStorage before this runs, so the guard
+  // above returns early and never overrides a stored range (WP-25).
+  const latest = dates[dates.length - 1];
+  const lastSelectable = getLastSelectableDate();
+  const monthStart = new Date(latest.getFullYear(), latest.getMonth(), 1);
+  let monthEnd = new Date(latest.getFullYear(), latest.getMonth() + 1, 0);
+  // Never default the range past the last selectable day (today and the future
+  // are never selectable — their emails aren't final yet).
+  if (monthEnd > lastSelectable) monthEnd = lastSelectable;
+  const from = isoKeyFromDate(monthStart);
+  const to = isoKeyFromDate(monthEnd);
+  if (dateFilterFrom && !dateFilterFrom.value) dateFilterFrom.value = from;
+  if (dateFilterTo && !dateFilterTo.value) dateFilterTo.value = to;
   onDateFilterChange();
 }
 
