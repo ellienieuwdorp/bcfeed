@@ -1,4 +1,10 @@
 # Runtime dependencies, pinned to the versions bcfeed is developed and tested against.
+#
+# pyproject.toml is the CANONICAL packaging source (its [project.dependencies]
+# carries these same pins). This file is kept in sync as a convenience so the
+# README's `pip install -r requirements.txt` flow keeps working; `pip install .`
+# uses pyproject. Keep the two lists identical when bumping a pin (WP-28/ARCH-9).
+#
 # Homebrew formula note: the formula must gain keyring, markdown-it-py, and
 # linkify-it-py (added with keychain storage and the docs renderer) at the next release.
 google-api-python-client==2.198.0

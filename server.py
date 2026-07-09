@@ -50,6 +50,7 @@ from paths import (
     SETUP_PATH,
     STARRED_PATH,
     VIEWED_PATH,
+    __version__,
 )
 from pipeline import (
     MaxResultsExceeded,
@@ -362,6 +363,7 @@ def config_json():
     has_credentials = _has_credentials_for_provider()
     payload = {
         "title": "bcfeed",
+        "version": __version__,
         "embed_proxy_url": embed_proxy_url,
         "has_token": gmail_token_available(),
         "has_credentials": has_credentials,

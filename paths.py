@@ -1,7 +1,30 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
+
+# Single source of truth for the application version. Surfaced at runtime via
+# /config.json (server.py) and Settings→About (web/js/settings.js), and read as
+# the packaging version by pyproject.toml ([tool.setuptools.dynamic]). Keep this
+# the ONLY place the version literal appears in the repo (ARCH-9 · WP-28).
+__version__ = "1.1.0"
+
+
+def resource_path(name: str) -> Path:
+    """
+    Resolve a bundled read-only asset (frontend files, in-app docs) that ships
+    alongside the code.
+
+    In a normal install/dev tree the assets sit next to this module. Under a
+    PyInstaller onedir/onefile bundle they are unpacked into ``sys._MEIPASS``;
+    prefer that root when present so a future macOS ``.app`` (WP-29) just works
+    without any call site changing. This is the ONLY legitimate ``sys._MEIPASS``
+    reference in the codebase — asset resolution, not credentials.
+    """
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    base = Path(bundle_root) if bundle_root else Path(__file__).resolve().parent
+    return base / name
 
 
 def _resolve_base_dir() -> Path:
@@ -47,10 +70,14 @@ EMBED_CACHE_PATH = DATA_DIR / "embed_cache.json"
 # is migrated into the keychain on first use, then deleted. The legacy pickle
 # token constant is fully retired (WP-13 · SEC-10/CQ-70).
 CREDENTIALS_PATH = DATA_DIR / GMAIL_CREDENTIALS_FILE
-DASHBOARD_PATH = Path(__file__).resolve().with_name("dashboard.html")
-DASHBOARD_CSS_PATH = Path(__file__).resolve().with_name("dashboard.css")
-DASHBOARD_JS_PATH = Path(__file__).resolve().with_name("dashboard.js")
-README_PATH = Path(__file__).resolve().with_name("README.md")
-SETUP_PATH = Path(__file__).resolve().with_name("SETUP.md")
-IMAP_SETUP_PATH = Path(__file__).resolve().with_name("IMAP_SETUP.md")
-GMAIL_SETUP_PATH = Path(__file__).resolve().with_name("GMAIL_SETUP.md")
+# Bundled asset paths route through resource_path() so a PyInstaller/.app bundle
+# resolves them from the unpacked bundle root (WP-28/WP-29). server.py derives
+# FRONTEND_DIR / WEB_JS_DIR from DASHBOARD_PATH.parent — no asset path is built
+# ad hoc outside this module.
+DASHBOARD_PATH = resource_path("dashboard.html")
+DASHBOARD_CSS_PATH = resource_path("dashboard.css")
+DASHBOARD_JS_PATH = resource_path("dashboard.js")
+README_PATH = resource_path("README.md")
+SETUP_PATH = resource_path("SETUP.md")
+IMAP_SETUP_PATH = resource_path("IMAP_SETUP.md")
+GMAIL_SETUP_PATH = resource_path("GMAIL_SETUP.md")

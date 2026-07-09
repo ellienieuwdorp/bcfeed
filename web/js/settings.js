@@ -3,7 +3,7 @@
 // substantive change is routing its inline status writes through status.js's
 // setStatus (the single status-text API) instead of a private copy.
 
-import { csrfFetch as fetch } from "./config.js";
+import { config, csrfFetch as fetch } from "./config.js";
 import { endpoints, fetchReleases } from "./api.js";
 import { setStatus } from "./status.js";
 import { state, releases } from "./state.js";
@@ -496,8 +496,19 @@ async function performDeleteData() {
   document.dispatchEvent(new CustomEvent("bcfeed:connection-changed"));
 }
 
+// Render the Settings→About version from /config.json's single VERSION source
+// (WP-28 · ARCH-9) instead of a hardcoded string. Falls back to a plain label
+// when config didn't load, so the section never shows a stale number.
+function renderAboutVersion() {
+  const el = document.getElementById("about-version");
+  if (!el) return;
+  const version = config.raw && config.raw.version ? String(config.raw.version) : "";
+  el.textContent = version ? `bcfeed v${version}` : "bcfeed";
+}
+
 // Wire the provider controller + reset button; called once by main.js.
 export function initSettings() {
+  renderAboutVersion();
   if (providerSelect) {
     providerSelect.addEventListener("change", () => {
       updateImapConfigVisibility();

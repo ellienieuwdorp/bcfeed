@@ -1,6 +1,5 @@
 import base64
 import json
-import sys
 import time
 from pathlib import Path
 
@@ -64,15 +63,18 @@ def _clear_token() -> None:
 
 def _find_credentials_file() -> Path | None:
     """
-    Look for a legacy credentials file in the app data dir, bundled resources, or CWD.
+    Look for a legacy credentials file in the app data dir or the CWD.
+
+    bcfeed follows a user-owned-credentials model: the OAuth client secret is
+    never bundled into a binary. The former branch that looked for a client
+    secret inside a PyInstaller bundle root was dead and contradicted that
+    model, so it was removed (WP-28 · ARCH-9). Asset bundling now goes through
+    ``paths.resource_path()``; credentials never do.
     """
     candidates = [
         CREDENTIALS_PATH,
+        Path.cwd() / GMAIL_CREDENTIALS_FILE,
     ]
-    bundle_root = getattr(sys, "_MEIPASS", None)
-    if bundle_root:
-        candidates.append(Path(bundle_root) / GMAIL_CREDENTIALS_FILE)
-    candidates.append(Path.cwd() / GMAIL_CREDENTIALS_FILE)
     for path in candidates:
         if path.exists():
             return path

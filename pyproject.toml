@@ -1,3 +1,64 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bcfeed"
+description = "A local-first dashboard for triaging Bandcamp release emails."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+# Version is NOT duplicated here: it is read from paths.__version__, the single
+# source of truth also surfaced via /config.json and Settings→About (ARCH-9).
+dynamic = ["version"]
+# Runtime dependencies, pinned to the tested versions. pyproject.toml is the
+# canonical packaging source; requirements.txt mirrors these pins for the README
+# `pip install -r requirements.txt` flow (WP-28 supersedes ARCH-9's split-brain).
+dependencies = [
+    "google-api-python-client==2.198.0",
+    "google-auth-oauthlib==1.4.0",
+    "requests==2.34.2",
+    "beautifulsoup4==4.15.0",
+    "flask==3.1.3",
+    "furl==2.1.4",
+    "keyring==25.7.0",
+    "markdown-it-py==4.2.0",
+    "linkify-it-py==2.1.0",
+]
+
+[project.scripts]
+# `pip install .` installs a `bcfeed` console command → bcfeed.py:main().
+bcfeed = "bcfeed:main"
+
+[tool.setuptools]
+# Flat module layout (no package dir): enumerate the top-level modules so the
+# wheel ships the code. Bundled assets (dashboard.html/css, web/js, *.md docs)
+# are resolved at runtime via paths.resource_path(); the macOS .app (WP-29) is
+# what vendors them into a bundle root.
+py-modules = [
+    "bandcamp",
+    "bandcamp_email_parser",
+    "bcfeed",
+    "credential_store",
+    "docs_render",
+    "email_provider",
+    "gmail_client",
+    "gmail_provider",
+    "imap_client",
+    "imap_provider",
+    "json_store",
+    "migrations",
+    "paths",
+    "pipeline",
+    "provider_factory",
+    "server",
+    "session_store",
+    "util",
+]
+
+[tool.setuptools.dynamic]
+version = { attr = "paths.__version__" }
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
