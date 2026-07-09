@@ -146,7 +146,7 @@ async function initData() {
     await fetchReleases();
   } catch (err) {
     console.warn(err);
-    showError((err && err.message) || "Failed to load releases. Is the bcfeed proxy running?");
+    showError((err && err.message) || "Couldn't load releases. Is bcfeed still running?");
     return;
   }
   try {

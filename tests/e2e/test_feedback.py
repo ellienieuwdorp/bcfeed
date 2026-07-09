@@ -135,9 +135,9 @@ def test_determinate_progress_and_button_locked_mid_run(page, app_server, seed_d
     )
     assert page.get_attribute("#activity-progress", "hidden") is None, "progress bar hidden mid-run"
 
-    # The primary button is a single-owner: it is disabled + "Populating…".
+    # The primary button is a single-owner: it is disabled + "Checking for releases…".
     assert page.get_attribute("#populate-range", "disabled") is not None
-    assert (page.text_content("#populate-range") or "").strip() == "Populating…"
+    assert (page.text_content("#populate-range") or "").strip() == "Checking for releases…"
 
     # Calendar interaction mid-run cannot erase progress or re-enable the button.
     page.evaluate(
@@ -176,7 +176,7 @@ def test_completion_toast(page, app_server, seed_data):
     # The button is released after completion.
     page.wait_for_function(
         "() => document.getElementById('populate-range').disabled === false"
-        " || document.getElementById('populate-range').textContent.trim() !== 'Populating…'"
+        " || document.getElementById('populate-range').textContent.trim() !== 'Checking for releases…'"
     )
 
 

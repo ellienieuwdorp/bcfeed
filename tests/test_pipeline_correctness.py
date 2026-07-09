@@ -179,7 +179,7 @@ def test_midrun_failure_keeps_completed_ranges_and_refetches_the_rest(
     status = session_store.scrape_status_for_range(june(10), june(16))
     for day in (june(10), june(11), june(13), june(14), june(16)):
         assert status[day.isoformat()], f"{day} should be marked scraped after the retry run"
-    assert any("Loaded 5 unique releases" in line for line in lines)
+    assert any("5 releases ready" in line for line in lines)
 
 
 def test_persist_happens_before_mark_within_each_range(frozen_today, seed, monkeypatch):
@@ -269,7 +269,7 @@ def test_cached_garbage_date_no_longer_aborts_populate(frozen_today, seed, make_
     lines: list[str] = []
     # Fully-cached range: the early dedupe previously raised ValueError here.
     pipeline.populate_release_cache("2025-06-16", "2025-06-16", 100, 20, log=lines.append)
-    assert any("Loaded 3 unique releases" in line for line in lines)
+    assert any("3 releases ready" in line for line in lines)
 
 
 def test_cached_garbage_date_does_not_abort_range_persist(
@@ -322,8 +322,8 @@ def test_legacy_dict_garbage_or_missing_date_is_a_counted_skip():
     releases = pipeline.construct_release_list(emails_dict, log=lines.append)
     assert [release["url"] for release in releases] == ["https://good.bandcamp.com/album/good"]
     assert releases[0]["date"] == "2025-06-16"
-    assert any("Skipped 2 message(s)" in line for line in lines)
-    assert sum("missing or unparseable date" in line for line in lines) == 2
+    assert any("Skipped 2 email(s)" in line for line in lines)
+    assert sum("missing or unreadable date" in line for line in lines) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -371,8 +371,8 @@ def test_imap_unparseable_date_is_one_counted_skip(date_header):
     lines: list[str] = []
     releases = pipeline.construct_release_list({"1": message}, log=lines.append)
     assert releases == []
-    assert any("missing or unparseable date" in line for line in lines)
-    assert any("Skipped 1 message(s)" in line for line in lines)
+    assert any("missing or unreadable date" in line for line in lines)
+    assert any("Skipped 1 email(s)" in line for line in lines)
     # Nothing date-less reaches dedupe; and dedupe would tolerate it anyway.
     assert dedupe_by_date(releases, keep="last") == []
 
@@ -504,7 +504,7 @@ def test_plaintext_only_email_in_50_email_run_costs_one_skip(emails, provider_pa
     releases = pipeline.construct_release_list(batch, log=lines.append)
     assert len(releases) == 49
     assert len({release["url"] for release in releases}) == 49
-    assert any("Skipped 1 message(s)" in line for line in lines)
+    assert any("Skipped 1 email(s)" in line for line in lines)
 
 
 @pytest.mark.parametrize("provider_path", ["gmail", "imap"])

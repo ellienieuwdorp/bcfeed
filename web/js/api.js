@@ -44,7 +44,7 @@ export function initEndpoints() {
 }
 
 export async function loadViewedSet() {
-  if (!endpoints.apiRoot) throw new Error("Proxy not configured");
+  if (!endpoints.apiRoot) throw new Error("bcfeed isn't ready yet.");
   const resp = await fetch(`${endpoints.apiRoot}/viewed-state`);
   if (!resp.ok) throw new Error(`Viewed state unavailable (HTTP ${resp.status})`);
   const data = await resp.json();
@@ -55,7 +55,7 @@ export async function loadViewedSet() {
 }
 
 export async function loadStarredSet() {
-  if (!endpoints.starred) throw new Error("Proxy not configured");
+  if (!endpoints.starred) throw new Error("bcfeed isn't ready yet.");
   const resp = await fetch(endpoints.starred);
   if (!resp.ok) throw new Error(`Starred state unavailable (HTTP ${resp.status})`);
   const data = await resp.json();
@@ -66,7 +66,7 @@ export async function loadStarredSet() {
 }
 
 export async function fetchReleases() {
-  if (!endpoints.apiRoot) throw new Error("Proxy not configured");
+  if (!endpoints.apiRoot) throw new Error("bcfeed isn't ready yet.");
   const resp = await fetch(`${endpoints.apiRoot}/releases`, { cache: "no-store" });
   if (!resp.ok) throw new Error(`Failed to load releases (HTTP ${resp.status})`);
   const data = await resp.json();
@@ -246,7 +246,7 @@ export async function ensureEmbed(release, opts = {}) {
       const response = await fetch(
         `${endpoints.embedProxyUrl}?url=${encodeURIComponent(release.url)}`,
       );
-      if (!response.ok) throw new Error(`Proxy fetch failed: ${response.status}`);
+      if (!response.ok) throw new Error(`Couldn't load the player (${response.status}).`);
       const data = await response.json();
       return applyEmbedData(data);
     } catch (err) {

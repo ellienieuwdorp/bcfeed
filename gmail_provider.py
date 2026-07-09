@@ -55,8 +55,8 @@ class GmailProvider(EmailProvider):
             raise AuthenticationError(str(e))
         except FileNotFoundError as e:
             raise AuthenticationError(
-                f"Gmail credentials not found. Please upload credentials.json: {e}"
-            )
+                "Can't find your Google access file. Set up your email in Settings."
+            ) from e
         except Exception as e:
             raise AuthenticationError(f"Gmail authentication failed: {e}")
 

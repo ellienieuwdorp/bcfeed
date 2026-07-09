@@ -125,7 +125,7 @@ def clear_gmail_credentials(*, clear_client_config: bool = True) -> None:
     if errors:
         # Generic message only — the underlying keychain/file detail must
         # never reach a client body (SEC-9/CQ-70); callers log the chain.
-        raise GmailAuthError("Couldn't fully clear the stored Gmail credentials.") from errors[0]
+        raise GmailAuthError("Couldn't fully disconnect Gmail.") from errors[0]
 
 
 def _load_stored_token() -> Credentials | None:
@@ -139,9 +139,7 @@ def _load_stored_token() -> Credentials | None:
         creds = Credentials.from_authorized_user_info(payload)
     except Exception as exc:
         _clear_token()
-        raise GmailAuthError(
-            "The saved Gmail authorization is invalid. Reload credentials in the settings panel."
-        ) from exc
+        raise GmailAuthError("Gmail isn't connected. Connect it in Settings.") from exc
 
     # Any authorization not carrying exactly the read-only scope — which
     # includes every legacy full-mailbox token, since those never held
@@ -160,7 +158,7 @@ def _persist_token(creds: Credentials) -> None:
         # Generic message only — keychain error text never reaches a client
         # body (SEC-9/CQ-70); callers log the chained detail.
         raise GmailAuthError(
-            "Couldn't save the Gmail connection to secure storage. See the server log for details."
+            "Couldn't save the Gmail connection to your Mac's Keychain. See the server log for details."
         ) from exc
 
 
@@ -172,14 +170,12 @@ def _load_client_config() -> dict:
             if isinstance(payload, dict):
                 return payload
         except Exception as exc:
-            raise GmailAuthError(
-                "Stored Gmail credentials are invalid. Reload credentials in the settings panel."
-            ) from exc
+            raise GmailAuthError("Gmail isn't connected. Connect it in Settings.") from exc
 
     cred_file = _find_credentials_file()
     if not cred_file:
         raise FileNotFoundError(
-            f"Could not find {GMAIL_CREDENTIALS_FILE}. Reload credentials file in the settings panel to regenerate it."
+            "Can't find your Google access file. Set up your email in Settings."
         )
 
     try:
@@ -187,12 +183,11 @@ def _load_client_config() -> dict:
         payload = save_gmail_client_config_json(raw_json)
     except (CredentialStoreError, ValueError) as exc:
         raise GmailAuthError(
-            "Couldn't move the Gmail credentials file into secure storage. "
-            "See the server log for details."
+            "Couldn't save your Google access file. See the server log for details."
         ) from exc
     except Exception as exc:
         raise GmailAuthError(
-            "Gmail credentials file could not be read. Reload it in the settings panel."
+            "Couldn't read your Google access file. Try choosing it again in Settings."
         ) from exc
 
     if cred_file == CREDENTIALS_PATH:
@@ -259,11 +254,13 @@ def gmail_authenticate(oauth_timeout_seconds: float | None = None):
             except RefreshError as exc:
                 _clear_token()
                 raise GmailAuthError(
-                    "Gmail access was revoked or expired. Reload credentials in the settings panel to re-authorize."
+                    "Your Google sign-in expired. Reconnect Gmail in Settings."
                 ) from exc
             except Exception as exc:
                 _clear_token()
-                raise GmailAuthError(f"Gmail refresh failed: {exc}") from exc
+                raise GmailAuthError(
+                    "Your Google sign-in expired. Reconnect Gmail in Settings."
+                ) from exc
         else:
             client_config = _load_client_config()
             flow = InstalledAppFlow.from_client_config(client_config, [GMAIL_SCOPE])
@@ -318,12 +315,12 @@ def search_messages(service, query, max_results=None):
             if getattr(exc, "status_code", None) == 401 or (exc.resp and exc.resp.status == 401):
                 _clear_token()
                 raise GmailAuthError(
-                    "Gmail access revoked. Re-load the credentials in the settings and re-authorize."
+                    "Your Google sign-in was removed. Reconnect Gmail in Settings."
                 ) from exc
         elif isinstance(exc, RefreshError):
             _clear_token()
             raise GmailAuthError(
-                "Gmail access revoked. Re-load the credentials in the settings and re-authorize."
+                "Your Google sign-in was removed. Reconnect Gmail in Settings."
             ) from exc
         raise
 

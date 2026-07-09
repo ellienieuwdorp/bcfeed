@@ -337,7 +337,8 @@ def test_50_release_preload_concurrency_rate_and_batched_writes(
         assert payload["v"] == 1
         assert payload["phase"] == "enrich"
         assert payload["level"] in ("info", "warn", "error")
-        assert payload["message"] == payload["text"]
+        assert isinstance(payload["message"], str)
+        assert "text" not in payload  # WP-26 removed the SSE text mirror field
     assert max(p["current"] for p in messages if p["current"] is not None) == 50
     assert all(p["total"] == 50 for p in messages if p["total"] is not None)
 

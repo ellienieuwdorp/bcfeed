@@ -568,12 +568,12 @@ def clear_credentials():
 
     try:
         clear_gmail_credentials()
-        log("Credentials cleared.")
+        log("Gmail disconnected.")
         return jsonify({"ok": True, "logs": logs})
     except Exception:
         app.logger.exception("Failed to clear credentials")
         return jsonify(
-            {"error": "Couldn't clear credentials. See the server log for details.", "logs": logs}
+            {"error": "Couldn't disconnect Gmail. See the server log for details.", "logs": logs}
         ), 500
 
 
@@ -591,7 +591,7 @@ _CONNECT_WAITING_MESSAGE = (
 )
 _CONNECT_DONE_MESSAGE = "Gmail connected."
 _CONNECT_FAILED_MESSAGE = (
-    "The Gmail connection didn't complete. Try loading the credentials file again."
+    "The Gmail connection didn't complete. Try choosing the Google access file again."
 )
 
 _gmail_connect_lock = threading.Lock()
@@ -657,7 +657,7 @@ def load_credentials():
             # anything is stored; a ValueError lands in the generic 400 below.
             save_gmail_client_config_json(raw_json.decode("utf-8"))
             clear_gmail_credentials(clear_client_config=False)
-            log("Saved Gmail credentials to secure storage. Continue in your browser…")
+            log("Saved. Finish signing in with Google in your browser…")
             _gmail_connect_job["status"] = "waiting"
             _gmail_connect_job["message"] = _CONNECT_WAITING_MESSAGE
             worker = threading.Thread(target=_gmail_connect_worker, daemon=True)
@@ -669,26 +669,25 @@ def load_credentials():
         # /connect-status for waiting|done|failed.
         return jsonify({"ok": True, "status": "waiting", "logs": logs})
     except UnicodeDecodeError:
-        return jsonify({"error": "Credentials file must be valid UTF-8 JSON", "logs": logs}), 400
+        return jsonify({"error": "The access file must be valid UTF-8 JSON.", "logs": logs}), 400
     except ValueError:
         # Includes JSON parse errors; keep the body generic (SEC-9).
         app.logger.exception("Rejected credentials upload")
         return jsonify(
-            {"error": "That file doesn't look like a Gmail credentials JSON file.", "logs": logs}
+            {"error": "That file doesn't look like a Google access file.", "logs": logs}
         ), 400
     except CredentialStoreError:
         app.logger.exception("Secure storage error while saving credentials")
         return jsonify(
             {
-                "error": "Couldn't save credentials to secure storage. "
-                "See the server log for details.",
+                "error": "Couldn't save your Google access file. See the server log for details.",
                 "logs": logs,
             }
         ), 500
     except Exception:
         app.logger.exception("Failed to load credentials")
         return jsonify(
-            {"error": "Couldn't load credentials. See the server log for details.", "logs": logs}
+            {"error": "Couldn't connect Gmail. See the server log for details.", "logs": logs}
         ), 500
 
 
@@ -696,10 +695,10 @@ def load_credentials():
 # Every `data:` payload on /populate-range-stream is one JSON object.
 #
 # Progress/log events (unnamed, EventSource `onmessage`):
-#   {v: 1, phase, current, total, message, level, text}
+#   {v: 1, phase, current, total, message, level}
 #   phase ∈ query|download|parse|persist|cache (or null), level ∈
 #   info|warn|error, current/total nullable ints (both present → the client
-#   may render a determinate bar), text = human-readable log line.
+#   may render a determinate bar), message = human-readable log line.
 #
 # Terminal events — exactly one per stream, nothing follows it:
 #   event: done   data: {new_releases, days_scraped}
@@ -772,23 +771,23 @@ def populate_range_stream():
     if provider_type == "gmail":
         if not gmail_credentials_configured():
             return error_stream(
-                "auth", "Gmail credentials not found. Reload credentials in the settings panel."
+                "auth", "Can't find your Google access file. Set up your email in Settings."
             )
         if not gmail_token_available():
             return error_stream(
                 "auth",
-                "Gmail token missing. Reload credentials in the settings panel to re-authenticate.",
+                "Gmail isn't connected. Connect it in Settings.",
             )
     elif provider_type == "imap":
         # Check IMAP credentials
         if not _has_credentials_for_provider():
             return error_stream(
                 "auth",
-                "IMAP credentials not configured. Please configure IMAP settings (host, username, password, folder) in the settings panel.",
+                "Your mail connection isn't set up. Add your mail settings (server, username, password, folder) in Settings.",
             )
 
     if not POPULATE_LOCK.acquire(blocking=False):
-        return error_stream("busy", "Another populate is already running")
+        return error_stream("busy", "A check is already running.")
 
     # Queue items: ("message", payload) for progress/log events, then exactly
     # one terminal ("done"|"error", payload), then a None sentinel.
@@ -810,7 +809,7 @@ def populate_range_stream():
                 log=emitter,
                 refresh=refresh,
             )
-            emitter("Populate completed.")
+            emitter("Check complete.")
             q.put(
                 (
                     "done",
@@ -878,7 +877,7 @@ def populate_range_stream():
 # --- Preload job (WP-17 · LOG-6/PERF-3) --------------------------------------
 # GET /preload-range-stream?start&end — SSE, same typed protocol as
 # /populate-range-stream (WP-10): progress events are
-# {v:1, phase:"enrich", current, total, message, level, text}; the single
+# {v:1, phase:"enrich", current, total, message, level}; the single
 # terminal event is `event: done` with {ok, failed, skipped, total, cancelled}
 # or `event: error` with {code, message} (code "busy" when a run is already
 # active). The worker enriches every release in the range that has no fresh
@@ -970,7 +969,6 @@ def preload_range_stream():
                     "total": total,
                     "message": str(text),
                     "level": level,
-                    "text": str(text),
                 },
             )
         )
@@ -1180,7 +1178,7 @@ def provider_config():
     except Exception:
         app.logger.exception("Failed to save provider config")
         return jsonify(
-            {"error": "Couldn't save the provider settings. See the server log for details."}
+            {"error": "Couldn't save your mail settings. See the server log for details."}
         ), 500
 
 

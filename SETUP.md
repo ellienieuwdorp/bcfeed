@@ -47,15 +47,15 @@ This will launch the server from the CLI and open the dashboard in your web brow
 
 You must keep the CLI process running in order to use **bcfeed**.
 
-## Choose an email provider
+## Connect your email
 
-Open **Settings → Email Configuration** after launching the app. **bcfeed** supports two provider types:
+Open **Settings → Email connection** after launching the app, then choose **How bcfeed reads your email**. **bcfeed** supports two ways to connect:
 
-- **Gmail API (OAuth)**: recommended if your Bandcamp mail lives in Gmail and you do not mind creating your own Google Cloud OAuth client. Access is read-only: the app can only read messages, never send, modify, or delete them.
-- **IMAP**: works with many providers, including Gmail, iCloud, Outlook, Fastmail, and other IMAP-compatible mailboxes.
+- **Google sign-in (Gmail)**: recommended if your Bandcamp mail lives in Gmail and you do not mind creating your own Google access file. Access is read-only: the app can only read messages, never send, modify, or delete them.
+- **Mail server (IMAP)**: works with most email services, including Gmail, iCloud, Outlook, Fastmail, and other IMAP-compatible mailboxes.
 
-Sensitive Gmail OAuth material, Gmail tokens, and IMAP passwords managed by **bcfeed** are stored in your system keychain. Non-secret provider settings are stored locally in the app data directory.
+Your Gmail sign-in and IMAP password are kept in your Mac's Keychain. The rest of your mail settings are stored locally in the app data directory.
 
-Provider-specific setup guides:
-- Gmail API (OAuth): [GMAIL_SETUP.md](GMAIL_SETUP.md)
-- IMAP: [IMAP_SETUP.md](IMAP_SETUP.md)
+Setup guides:
+- Google sign-in (Gmail): [GMAIL_SETUP.md](GMAIL_SETUP.md)
+- Mail server (IMAP): [IMAP_SETUP.md](IMAP_SETUP.md)

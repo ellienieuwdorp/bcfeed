@@ -316,7 +316,7 @@ def test_gmail_429_retries_with_backoff_and_visible_retrying_event(
     pipeline.populate_release_cache("2025-06-16", "2025-06-16", 100, 20, log=emitter)
 
     assert fake_clock == [1.0]  # bounded exponential backoff, first step
-    retrying = [e for e in events if "retrying" in e["text"].lower()]
+    retrying = [e for e in events if "retrying" in e["message"].lower()]
     assert retrying, "the user must see a visible retrying progress event"
     assert retrying[0]["level"] == "warn"
     assert emitter.new_releases == 3
@@ -357,8 +357,8 @@ def test_gmail_per_message_404_is_a_counted_skip_not_a_crash(frozen_today, monke
 
     assert emitter.new_releases == 4  # 4 parsed, 1 counted skip, run continued
     assert fake_clock == []  # 404 is permanent: never retried
-    assert any("404" in e["text"] and e["level"] == "warn" for e in events)
-    assert any("Skipped 1 message(s) that could not be downloaded" in e["text"] for e in events)
+    assert any("404" in e["message"] and e["level"] == "warn" for e in events)
+    assert any("Skipped 1 message(s) that could not be downloaded" in e["message"] for e in events)
     assert _read_status(june(16), june(16))["2025-06-16"]
 
 
@@ -377,10 +377,10 @@ def test_imap_per_message_fetch_error_is_a_counted_skip_not_a_lost_batch(frozen_
     pipeline.populate_release_cache("2025-06-16", "2025-06-16", 100, 20, log=emitter)
 
     assert emitter.new_releases == 2
-    warn_lines = [e["text"] for e in events if e["level"] == "warn"]
+    warn_lines = [e["message"] for e in events if e["level"] == "warn"]
     assert any("skipped message 2" in line for line in warn_lines)
     assert any("skipped message 3" in line for line in warn_lines)
-    assert any("Skipped 2 message(s) that could not be downloaded" in e["text"] for e in events)
+    assert any("Skipped 2 message(s) that could not be downloaded" in e["message"] for e in events)
     assert _read_status(june(16), june(16))["2025-06-16"]
 
 
@@ -491,7 +491,7 @@ def test_classifier_rejects_non_release_mail_as_counted_skip(emails, provider_pa
     lines: list[str] = []
     releases = pipeline.construct_release_list({"1": message}, log=lines.append)
     assert releases == []
-    assert any("Skipped 1 message(s)" in line for line in lines)
+    assert any("Skipped 1 email(s)" in line for line in lines)
 
 
 def test_classifier_matrix_is_identical_through_both_providers(emails):
@@ -529,7 +529,7 @@ def test_locale_subject_defeating_the_phrase_list_degrades_to_counted_skip(email
     )
     lines: list[str] = []
     assert pipeline.construct_release_list({"1": message}, log=lines.append) == []
-    assert any("Skipped 1 message(s)" in line for line in lines)
+    assert any("Skipped 1 email(s)" in line for line in lines)
 
 
 # ===========================================================================
@@ -596,10 +596,10 @@ def test_wrong_imap_folder_writes_no_empty_day_records_and_is_visible(frozen_tod
     # retired no_results_dates.json file.
     assert not (paths.DATA_DIR / "no_results_dates.json").exists()
 
-    diagnostics = [e for e in events if "0 Bandcamp messages" in e["text"]]
+    diagnostics = [e for e in events if "0 Bandcamp messages" in e["message"]]
     assert diagnostics, "the mis-selected folder must be visible, not silent"
     assert diagnostics[0]["level"] == "warn"
-    assert 'folder "Newsletters"' in diagnostics[0]["text"]
+    assert 'folder "Newsletters"' in diagnostics[0]["message"]
 
     # The folder-wide corroboration search was sender-only (FROM, undated).
     assert ["FROM", f'"{SENDER}"'] in fake.search_calls
@@ -619,7 +619,7 @@ def test_corroborated_empty_imap_range_is_recorded_with_diagnostic(frozen_today,
     assert emitter.days_scraped == 2
     status = _read_status(june(10), june(11))
     assert all(status.values())
-    assert any("matched 0 of 2 messages" in e["text"] for e in events)
+    assert any("matched 0 of 2 messages" in e["message"] for e in events)
 
 
 def test_corroboration_failure_fails_safe_and_leaves_days_unrecorded(frozen_today, monkeypatch):

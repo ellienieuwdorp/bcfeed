@@ -3,7 +3,7 @@
 Covers:
 
 - Progress/log events are JSON payloads ``{v, phase, current, total, message,
-  level, text}`` with a fixed phase/level vocabulary — never bare prose.
+  level}`` with a fixed phase/level vocabulary — never bare prose.
 - A 3-range run emits query and download events with ``current``/``total``
   sufficient for a determinate progress bar, and terminates in ``event: done``
   with ``{new_releases, days_scraped}``.
@@ -36,7 +36,7 @@ from email_provider import EmailMessage, ProviderError, SearchQuery
 PHASES = {"query", "download", "parse", "persist", "cache"}
 LEVELS = {"info", "warn", "error"}
 ERROR_CODES = {"auth", "max_results", "gmail", "parse", "internal", "busy"}
-EVENT_KEYS = {"v", "phase", "current", "total", "message", "level", "text"}
+EVENT_KEYS = {"v", "phase", "current", "total", "message", "level"}
 
 POPULATE_URL = "/populate-range-stream?start=2025-06-10&end=2025-06-16"
 
@@ -197,8 +197,7 @@ def test_three_range_run_emits_typed_events_and_done(past_gate, seed, monkeypatc
         assert payload["v"] == 1
         assert payload["phase"] is None or payload["phase"] in PHASES
         assert payload["level"] in LEVELS
-        assert isinstance(payload["text"], str)
-        assert payload["message"] == payload["text"]
+        assert isinstance(payload["message"], str)
         for key in ("current", "total"):
             assert payload[key] is None or isinstance(payload[key], int)
 
@@ -257,7 +256,7 @@ def test_midrun_provider_failure_yields_gmail_code_and_never_done(past_gate, see
     assert "injected provider failure" in payload["message"]
     assert events[-1][0] == "error"
     # The log survives: range 1 completed and streamed before the failure.
-    texts = [p["text"] for p in message_events(events)]
+    texts = [p["message"] for p in message_events(events)]
     assert any("2025-06-10" in t for t in texts)
 
 
@@ -348,7 +347,7 @@ def test_disconnect_then_rerequest_reports_busy(past_gate, monkeypatch):
     try:
         events = run_stream(past_gate)
         assert terminal_events(events) == [
-            ("error", {"code": "busy", "message": "Another populate is already running"})
+            ("error", {"code": "busy", "message": "A check is already running."})
         ]
     finally:
         unblock.set()

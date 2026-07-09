@@ -47,15 +47,15 @@ class ProgressEmitter:
     Event payload shape (protocol v1 — consumed by dashboard.js, and by the
     WP-22 progress UI later):
 
-    ``{v: 1, phase, current, total, message, level, text}``
+    ``{v: 1, phase, current, total, message, level}``
 
     - ``phase``: one of :data:`PHASES` or ``None`` for generic lines.
     - ``current``/``total``: nullable ints; both present means the client may
       render a determinate progress bar, absent means indeterminate.
     - ``level``: ``info`` | ``warn`` | ``error``.
-    - ``message``/``text``: the same human-readable line. ``text`` is the
-      log-box fallback the client always appends; ``message`` is the copy
-      channel (the UX plan owns wording, the protocol just carries it).
+    - ``message``: the human-readable line the client appends to its Details
+      log (the UX plan owns wording, the protocol just carries it). The
+      pre-WP-10 ``text`` mirror was removed in WP-26 — clients read ``message``.
 
     Terminal outcomes are NOT emitted here: the pipeline raises, and the SSE
     worker maps the exception to a terminal ``event: error`` code — or emits
@@ -101,7 +101,6 @@ class ProgressEmitter:
                     "total": total,
                     "message": text,
                     "level": level,
-                    "text": text,
                 }
             )
         elif self._log is not None:
@@ -166,7 +165,7 @@ def construct_release_list(emails: dict, *, log=print, source: str | None = None
     provider adapters (LOG-21/LOG-22 schema half).
     """
     emit = ProgressEmitter.ensure(log)
-    emit("Parsing messages...", phase="parse", current=0, total=len(emails))
+    emit("Reading emails…", phase="parse", current=0, total=len(emails))
     releases_unsifted = []
     skipped = 0
     for _msg_id, email in emails.items():
@@ -201,7 +200,7 @@ def construct_release_list(emails: dict, *, log=print, source: str | None = None
             )
         except Exception as exc:
             skipped += 1
-            emit(f"Warning: failed to parse one message: {exc}", phase="parse", level="warn")
+            emit(f"Warning: couldn't read one email: {exc}", phase="parse", level="warn")
             continue
 
         # Only keep emails we could match to a Bandcamp release URL.
@@ -215,7 +214,7 @@ def construct_release_list(emails: dict, *, log=print, source: str | None = None
         if date is None:
             skipped += 1
             emit(
-                "Warning: skipped one message with a missing or unparseable date.",
+                "Warning: skipped one email with a missing or unreadable date.",
                 phase="parse",
                 level="warn",
             )
@@ -236,9 +235,9 @@ def construct_release_list(emails: dict, *, log=print, source: str | None = None
         )
 
     # Sift releases with identical urls
-    emit("Checking for releases with identical URLS...", phase="parse")
+    emit("Removing duplicate releases…", phase="parse")
     if skipped:
-        emit(f"Skipped {skipped} message(s) due to parse errors.", phase="parse", level="warn")
+        emit(f"Skipped {skipped} email(s) that couldn't be read.", phase="parse", level="warn")
     releases = dedupe_by_url(releases_unsifted)
 
     return releases
@@ -308,7 +307,7 @@ def populate_release_cache(
 
     if missing_ranges:
         emit(
-            f"The following date ranges will be downloaded from {provider_name}:",
+            "Dates still to check:",
             phase="query",
             current=0,
             total=len(missing_ranges),
@@ -317,7 +316,7 @@ def populate_release_cache(
             emit(f"  {start_missing} to {end_missing}", phase="query")
     else:
         emit(
-            f"This date range has already been scraped; no {provider_name} download needed.",
+            "These dates were already checked — nothing new to fetch.",
             phase="cache",
         )
         # Still need to dedupe and persist cached releases. No source is
@@ -326,7 +325,7 @@ def populate_release_cache(
         deduped = dedupe_by_date(releases, keep="last")
         persist_release_metadata(deduped, exclude_today=True)
         emit("")
-        emit(f"Loaded {len(deduped)} unique releases from cache.", phase="cache")
+        emit(f"{len(deduped)} releases ready for these dates.", phase="cache")
         return
 
     total_ranges = len(missing_ranges)
@@ -351,7 +350,7 @@ def populate_release_cache(
             query_before = query_end_exclusive.strftime("%Y-%m-%d")
             emit("")
             emit(
-                f"Querying {provider_name} for {query_after} to {query_before}...",
+                f"Searching your {provider_name} mail…",
                 phase="query",
                 current=range_index,
                 total=total_ranges,
@@ -379,7 +378,7 @@ def populate_release_cache(
                 raise
             if not message_ids:
                 emit(
-                    f"No messages found for {query_after} to {query_before}",
+                    "No release emails found for these dates.",
                     phase="query",
                     current=range_index,
                     total=total_ranges,
@@ -409,7 +408,7 @@ def populate_release_cache(
                 continue
             total_messages = len(message_ids)
             emit(
-                f"Found {total_messages} messages for {query_after} to {query_before}",
+                f"Found {total_messages} release emails.",
                 phase="download",
                 current=0,
                 total=total_messages,
@@ -423,7 +422,7 @@ def populate_release_cache(
                 for batch_start in range(0, total_messages, step):
                     batch = message_ids[batch_start : batch_start + step]
                     emit(
-                        f"Downloading messages {batch_start} to "
+                        f"Downloading emails {batch_start} to "
                         f"{min(batch_start + len(batch), total_messages)}",
                         phase="download",
                         current=batch_start,
@@ -433,7 +432,7 @@ def populate_release_cache(
                         provider.fetch(batch, batch_size=step, log=_provider_fetch_log(emit))
                     )
                 emit(
-                    f"Downloaded {len(emails)} messages",
+                    f"Downloaded {len(emails)} emails",
                     phase="download",
                     current=total_messages,
                     total=total_messages,
@@ -446,8 +445,7 @@ def populate_release_cache(
             except Exception as exc:
                 raise ParseError(f"Couldn't read the downloaded messages: {exc}") from exc
             emit(
-                f"Parsed {len(new_releases)} releases from {provider_name} "
-                f"for {query_after} to {query_before}.",
+                f"Found {len(new_releases)} releases.",
                 phase="parse",
                 current=len(emails),
                 total=len(emails),
@@ -463,7 +461,7 @@ def populate_release_cache(
             # the previous end-of-run persist; only this range's winners are
             # written (no re-persisting of earlier data).
             emit(
-                f"Saving releases for {query_after} to {query_before}...",
+                "Saving releases…",
                 phase="persist",
                 current=range_index,
                 total=total_ranges,
@@ -506,4 +504,4 @@ def populate_release_cache(
     deduped = dedupe_by_date(releases, keep="last")
 
     emit("")
-    emit(f"Loaded {len(deduped)} unique releases including cache.", phase="persist")
+    emit(f"{len(deduped)} releases ready for these dates.", phase="persist")

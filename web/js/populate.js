@@ -65,7 +65,7 @@ export function updatePopulateButton(allPopulated) {
   }
   if (isPopulating) {
     populateBtn.disabled = true;
-    populateBtn.textContent = "Populating…";
+    populateBtn.textContent = "Checking for releases…";
     populateBtn.title = "";
     populateBtn.dataset.mode = "fetch";
     showUpToDate(false);
@@ -179,7 +179,7 @@ function handleTerminalError(data) {
     resumeForPopulate();
     return;
   }
-  const detail = (typeof data.text === "string" && data.text) || data.message;
+  const detail = typeof data.message === "string" ? data.message : "";
   if (detail) logAppendLine(detail);
   setActivityState("error");
   setDetailsOpen(true);
@@ -249,7 +249,7 @@ function runPopulate(startVal, endVal, opts = {}) {
     const data = parseSseData(ev && ev.data);
     if (!data || data.v !== 1) return;
     blipNoted = false;
-    if (typeof data.text === "string") logAppendLine(data.text);
+    if (typeof data.message === "string") logAppendLine(data.message);
     setActivityLine(phaseLabel(data));
     reportProgress(data);
   };

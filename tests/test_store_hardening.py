@@ -346,7 +346,7 @@ def test_disconnect_mid_populate_keeps_lock_until_worker_exits(server_mod, popul
     resp2 = server_mod.app.test_client().get(POPULATE_URL)
     body2 = resp2.get_data(as_text=True)
     assert "event: error" in body2
-    assert "Another populate is already running" in body2
+    assert "A check is already running." in body2
     assert server_mod.POPULATE_LOCK.locked()
 
     # When the worker finishes, it releases the lock even though the client
@@ -360,7 +360,7 @@ def test_disconnect_mid_populate_keeps_lock_until_worker_exits(server_mod, popul
     resp3 = server_mod.app.test_client().get(POPULATE_URL)
     body3 = resp3.get_data(as_text=True)
     assert "fake populate ran" in body3
-    assert "Populate completed." in body3
+    assert "Check complete." in body3
     assert "event: done" in body3
     assert not server_mod.POPULATE_LOCK.locked()
 
@@ -371,7 +371,7 @@ def test_normal_completion_releases_lock(server_mod, populate_harness):
 
     resp = server_mod.app.test_client().get(POPULATE_URL)
     body = resp.get_data(as_text=True)
-    assert "Populate completed." in body
+    assert "Check complete." in body
     assert "event: done" in body
     assert _wait_until(lambda: not server_mod.POPULATE_LOCK.locked())
 

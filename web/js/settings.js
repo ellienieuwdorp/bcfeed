@@ -101,6 +101,9 @@ function syncImapUi() {
       hasFolder &&
       imapState.loadedFingerprint === getImapConnectionFingerprint(connection)
     );
+    imapSave.title = imapSave.disabled
+      ? "Load your folders and choose one, then you can save your mail settings."
+      : "";
   }
   if (imapPass) {
     imapPass.placeholder = imapState.hasSavedPassword ? "••••••••" : "Password";
@@ -186,7 +189,7 @@ function renderImapFolders(folders, selectedFolder, recommendedFolder) {
   imapFolderSelect.disabled = (folders || []).length === 0;
   if (imapFolderHelp) {
     imapFolderHelp.textContent = recommendedFolder
-      ? "A recommended folder has been preselected. Review it, then save the configuration."
+      ? "We've picked the folder that looks right. Check it, then save."
       : "Choose the folder to scan for Bandcamp release emails.";
   }
 }
@@ -394,7 +397,7 @@ async function saveProviderConfig() {
         document.dispatchEvent(new CustomEvent("bcfeed:connection-changed"));
       }
     } else {
-      setStatus(imapSaveStatus, `Error: ${data.error || "Failed to save configuration."}`, "error");
+      setStatus(imapSaveStatus, `Error: ${data.error || "Failed to save settings."}`, "error");
     }
   } catch (e) {
     setStatus(imapSaveStatus, "Error: " + e.message, "error");
@@ -504,7 +507,7 @@ export function initSettings() {
       } else {
         setStatus(
           imapDiscoverStatus,
-          "Load folders and save the IMAP configuration to switch providers.",
+          "Load folders and save your mail settings to finish switching.",
         );
         setStatus(imapSaveStatus, "");
         maybeAutoDiscoverImapFolders();

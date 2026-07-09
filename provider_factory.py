@@ -141,9 +141,7 @@ def create_provider(
 
         imap_config = config.get("imap_config")
         if not imap_config:
-            raise ValueError(
-                "IMAP provider requires configuration. Please configure IMAP settings first."
-            )
+            raise ValueError("IMAP isn't set up yet. Add your mail settings first.")
 
         return ImapProvider(
             ImapConfig(

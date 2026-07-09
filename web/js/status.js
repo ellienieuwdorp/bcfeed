@@ -42,7 +42,7 @@ export function hideLoading() {
 export function showError(message) {
   hideLoading();
   if (errorState) {
-    errorState.textContent = message || "Failed to load releases. Is the bcfeed proxy running?";
+    errorState.textContent = message || "Couldn't load releases. Is bcfeed still running?";
     errorState.style.display = "flex";
   }
   const tableWrapper = document.querySelector(".table-wrapper");

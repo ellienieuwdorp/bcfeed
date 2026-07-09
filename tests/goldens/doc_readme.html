@@ -1,53 +1,53 @@
 <h1>bcfeed</h1>
 <h2>Introduction</h2>
 <p><strong>bcfeed</strong> is a local macOS app that turns your Bandcamp &quot;New release from...&quot; notification emails into a browsable dashboard of releases.</p>
-<p>It works by searching your configured email account within a given date range for Bandcamp release notification emails, then saving the release details locally so you can sort, filter, and preview them.</p>
+<p>It works by searching your email account within a given date range for Bandcamp release notification emails, then saving the release details locally so you can sort, filter, and preview them.</p>
 <p>You can connect either:</p>
 <ul>
-<li>a Gmail account using the Gmail API and your own OAuth client</li>
+<li>a Gmail account using the Gmail API and your own Google access file</li>
 <li>any IMAP-compatible mailbox by entering the server details in the Settings panel</li>
 </ul>
 <h2>Setup</h2>
-<p>See <a href="setup" target="_blank" rel="noopener">SETUP.md</a> to install and run <strong>bcfeed</strong>. Once it's running, set up an email provider:</p>
+<p>See <a href="setup" target="_blank" rel="noopener">SETUP.md</a> to install and run <strong>bcfeed</strong>. Once it's running, connect your email:</p>
 <ul>
-<li>Gmail API (OAuth): <a href="setup-gmail" target="_blank" rel="noopener">GMAIL_SETUP.md</a></li>
-<li>IMAP: <a href="setup-imap" target="_blank" rel="noopener">IMAP_SETUP.md</a></li>
+<li>Google sign-in (Gmail): <a href="setup-gmail" target="_blank" rel="noopener">GMAIL_SETUP.md</a></li>
+<li>Mail server (IMAP): <a href="setup-imap" target="_blank" rel="noopener">IMAP_SETUP.md</a></li>
 </ul>
 <h2>Workflow</h2>
 <p><strong>A typical workflow would be:</strong></p>
 <ol>
-<li><strong>Select a date range to populate</strong>, e.g. the whole of last December.</li>
-<li>Click <strong>&quot;Populate release list&quot;</strong>. This searches your configured provider for Bandcamp release notifications within the specified date range and saves the results locally.</li>
+<li><strong>Select a date range on the calendar</strong>, e.g. the whole of last December.</li>
+<li>Click <strong>&quot;Get releases&quot;</strong>. This searches your email for Bandcamp release notifications within the selected dates and saves the results locally. If a range is already checked, the button becomes <strong>&quot;Check again&quot;</strong> so you can re-check the same dates.</li>
 <li>Now you can do one of three things:</li>
 </ol>
 <ul>
-<li><strong>Browse straight away</strong> - this works! However, this is likely to be slow – the data for each release needs to be loaded from each Bandcamp page individually, which takes a few seconds any time you click on a release. For a more enjoyable UX, you can</li>
-<li>Click <strong>&quot;Preload release data&quot;</strong> and then browse: this preloads the release info and BC player widgets for all releases in the selected date range for faster browsing, but may take a while for larger date ranges. Or you can</li>
-<li><strong>&quot;Star&quot; the releases you're interested in, then filter and browse the starred releases using the &quot;Starred&quot; button at the top right</strong>. Starring a release triggers a preload behind the scenes, so by the time you click &quot;Starred&quot;, the releases should already be loaded.</li>
+<li><strong>Browse straight away</strong> - this works! However, the first time you open each release its player and details are loaded from its Bandcamp page, which takes a few seconds. For smoother browsing, you can</li>
+<li>Let <strong>bcfeed load the players in the background</strong> - it does this automatically at a polite pace for the dates you're viewing. Or you can</li>
+<li><strong>&quot;Star&quot; the releases you're interested in, then filter and browse the starred releases using the &quot;Starred&quot; button at the top right</strong>. Starring a release loads its player first, so by the time you click &quot;Starred&quot;, it should already be ready.</li>
 </ul>
 <ol start="4">
-<li>If you like, once you've browsed that date range, you can mark all the releases as &quot;Seen&quot; (in the left panel).</li>
+<li>If you like, once you've browsed that date range, you can mark the shown releases as &quot;Seen&quot; (in the left panel).</li>
 </ol>
 <h2>Notes</h2>
-<p>Once you've fetched (or browsed) a date range from your mailbox once, you don't have to do it again. Each line in the saved list corresponds to an <em>email</em> in your inbox. So if you've already fetched a date range in the past, that's all the releases (emails) you'll ever see in that date range.</p>
-<p>Releases with preloaded release data and player widgets are marked with a blue &quot;CACHED&quot; badge.</p>
-<p>The Settings panel at the top right allows you to choose a provider, load or clear Gmail credentials, configure IMAP host/user/folder settings, and reset the cache.</p>
-<p>Sensitive Gmail OAuth material, Gmail tokens, and IMAP passwords managed by <strong>bcfeed</strong> are stored securely in your system keychain.</p>
+<p>Once you've checked (or browsed) a date range from your mailbox once, you don't have to do it again. Each line in the saved list corresponds to an <em>email</em> in your inbox. So if you've already checked a date range in the past, that's all the releases (emails) you'll ever see in that date range. If you do want to look again, use <strong>&quot;Check again&quot;</strong>.</p>
+<p>You can turn on a small &quot;Saved&quot; tag next to releases whose player is ready (&quot;Show 'player ready' tags&quot; in Settings).</p>
+<p>The Settings panel at the top right lets you choose how bcfeed reads your email, connect or disconnect Gmail, enter your IMAP mail settings, and delete downloaded data.</p>
+<p>Your Gmail sign-in and IMAP password are kept in your Mac's Keychain.</p>
 <h2>Performance</h2>
 <h3>Why are releases loading so slowly?</h3>
-<p>Make sure to read the bit above about pre-loading releases.</p>
-<p>Typically it's pretty quick to fetch releases from Gmail, a few hundred emails should take a few seconds. IMAP accounts can take a bit longer and be provider dependant, though ~100 emails should typically not take much longer than a minute. However, Bandcamp release notification emails only contain basic metadata (artist, title, label/page, Bandcamp URL). Fetching the Bandcamp player widget and release info requires scraping the Bandcamp page for each release, which is much slower (a few seconds per release). Naturally, you are also at the mercy of the Bandcamp servers at any given moment – it's not uncommon for them to slow to a crawl.</p>
-<p>In general it's better to pre-load the releases, either using the &quot;Preload&quot; button on the left side or by starring them.</p>
-<p>The good news is that <strong>bcfeed</strong> saves the release list, release info and Bandcamp player widgets locally and these persist across <strong>bcfeed</strong> sessions, so you only need to preload once for any given release.</p>
+<p>Make sure to read the bit above about loading players in the background.</p>
+<p>Typically it's pretty quick to get releases from Gmail - a few hundred emails should take a few seconds. IMAP accounts can take a bit longer and it depends on your mail service, though ~100 emails should typically not take much longer than a minute. However, Bandcamp release notification emails only contain basic metadata (artist, title, label/page, Bandcamp URL). Loading the Bandcamp player and release details means reading the Bandcamp page for each release, which is much slower (a few seconds per release). Naturally, you are also at the mercy of the Bandcamp servers at any given moment – it's not uncommon for them to slow to a crawl.</p>
+<p>In general it's better to let the players load ahead of time, either by leaving bcfeed running on the dates you're browsing or by starring the releases you care about.</p>
+<p>The good news is that <strong>bcfeed</strong> saves the release list, release details, and Bandcamp players locally and these persist across <strong>bcfeed</strong> sessions, so you only need to load each release once.</p>
 <h2>Requirements</h2>
 <p><strong>bcfeed</strong> has mainly been tested on recent macOS and Chrome. It probably works on other macOS versions. It may or may not work on other browsers. It probably won't work on Windows, but feel free to try.</p>
 <p><strong>bcfeed</strong> supports:</p>
 <ul>
-<li>Gmail accounts via the Gmail API and your own OAuth client</li>
+<li>Gmail accounts via the Gmail API and your own Google access file</li>
 <li>IMAP-compatible accounts via the Settings panel</li>
 </ul>
-<p>Some IMAP providers require IMAP to be enabled and/or an app-specific password. Secure credential storage also requires a working system keychain backend (available by default on macOS).</p>
+<p>Some email services require IMAP to be enabled and/or an app-specific password. bcfeed also needs your Mac's Keychain (built into macOS) to save your sign-in.</p>
 <h2>Privacy</h2>
-<p><strong>bcfeed</strong> runs entirely on your local machine. It collects no analytics or telemetry, and the author never has access to your credentials or email data. For the full details, see <a href="privacy.md" target="_blank" rel="noopener">privacy.md</a>.</p>
+<p><strong>bcfeed</strong> runs entirely on your local machine. It collects no analytics or telemetry, and the author never has access to your sign-in details or email data. For the full details, see <a href="privacy.md" target="_blank" rel="noopener">privacy.md</a>.</p>
 <h2>License</h2>
 <p><strong>bcfeed</strong> is released under the MIT License. See <a href="LICENSE" target="_blank" rel="noopener">LICENSE</a>.</p>

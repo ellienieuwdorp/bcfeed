@@ -28,7 +28,7 @@ def _wrap_keyring_error(exc: Exception) -> CredentialStoreError:
     message = str(exc).strip() or exc.__class__.__name__
     if isinstance(exc, NoKeyringError):
         return CredentialStoreUnavailableError(
-            "System keychain access is unavailable. Configure a supported keychain backend and try again."
+            "bcfeed couldn't reach your Mac's Keychain. Restart bcfeed and try again."
         )
     return CredentialStoreError(f"System keychain error: {message}")
 

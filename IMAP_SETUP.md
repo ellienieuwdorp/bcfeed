@@ -1,17 +1,17 @@
 # IMAP setup guide
 
-Use this guide for `Settings -> Email Configuration -> Provider -> IMAP`.
+Use this guide for `Settings -> Email connection -> How bcfeed reads your email -> Mail server (IMAP)`.
 
-Only iCloud has been tested so far. If you confirm another provider works, or hit a provider-specific issue, open an issue at [github.com/keinobjekt/bcfeed/issues](https://github.com/keinobjekt/bcfeed/issues).
+Only iCloud has been tested so far. If you confirm another email service works, or hit a service-specific issue, open an issue at [github.com/keinobjekt/bcfeed/issues](https://github.com/keinobjekt/bcfeed/issues).
 
-bcfeed IMAP supports standard username/password login only. Providers that require OAuth2 / Modern Auth for IMAP are unsupported.
+bcfeed IMAP supports standard username/password login only. Email services that require OAuth2 / Modern Auth for IMAP are unsupported.
 
 1. Open `Settings`.
-2. Set `Provider` to `IMAP`.
-3. Enter the server, port, security mode, username, and password for your provider.
+2. Set `How bcfeed reads your email` to `Mail server (IMAP)`.
+3. Enter the server, port, security mode, username, and password for your mailbox.
 4. Click `Connect & load folders`.
 5. Choose the folder that contains your Bandcamp emails, or use `Enter folder manually`.
-6. Click `Save IMAP Configuration`.
+6. Click `Save mail settings`.
 
 <details>
 <summary>iCloud Mail</summary>
@@ -103,12 +103,12 @@ Docs: [Outlook.com IMAP settings](https://support.microsoft.com/en-gb/office/pop
 
 </details>
 
-If your provider is not listed, use its official IMAP docs to find the server name, port, security mode, username format, and whether it requires an app password.
+If your email service is not listed, use its official IMAP docs to find the server name, port, security mode, username format, and whether it requires an app password.
 
 ## Troubleshooting
 
-If login fails, double-check the server name, port, username, and security mode. If your provider uses two-factor authentication, you may need an app-specific password instead of your usual mailbox password.
+If login fails, double-check the server name, port, username, and security mode. If your email service uses two-factor authentication, you may need an app-specific password instead of your usual mailbox password.
 
 If you can connect but cannot save, run `Connect & load folders` first, then choose a folder or enter one manually before saving.
 
-If secure credential storage is unavailable, bcfeed cannot save IMAP passwords. Make sure your machine has a supported system keychain backend available.
+If bcfeed can't reach your Mac's Keychain, it cannot save your IMAP password. Make sure your Keychain is available (it is built into macOS).
