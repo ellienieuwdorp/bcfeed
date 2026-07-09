@@ -6,6 +6,8 @@
 
 It works by searching your email account within a given date range for Bandcamp release notification emails, then saving the release details locally so you can sort, filter, and preview them.
 
+![The bcfeed dashboard: a sortable table of releases with a calendar coverage map on the left.](docs/screenshots/readme-dashboard-light.png)
+
 You can connect either:
 
 - a Gmail account using the Gmail API and your own Google access file
@@ -14,7 +16,9 @@ You can connect either:
 
 ## Setup
 
-See [SETUP.md](SETUP.md) to install and run **bcfeed**. Once it's running, connect your email:
+See [SETUP.md](SETUP.md) to install and run **bcfeed**. The first time you launch it, a short checklist walks you through connecting your email:
+
+![First-run checklist: choose Mail server (IMAP) or Google sign-in, connect it, then get your first releases.](docs/screenshots/readme-onboarding-light.png)
 
 - Google sign-in (Gmail): [GMAIL_SETUP.md](GMAIL_SETUP.md)
 - Mail server (IMAP): [IMAP_SETUP.md](IMAP_SETUP.md)
@@ -42,6 +46,22 @@ You can turn on a small "Saved" tag next to releases whose player is ready ("Sho
 The Settings panel at the top right lets you choose how bcfeed reads your email, connect or disconnect Gmail, enter your IMAP mail settings, and delete downloaded data.
 
 Your Gmail sign-in and IMAP password are kept in your Mac's Keychain.
+
+
+## Keyboard shortcuts
+
+**bcfeed** has a fast keyboard triage loop for working through releases. The same list is available in the app from the **?** button next to the table.
+
+| Keys | Action |
+|---|---|
+| `↑` `↓` | Move between releases |
+| `←` `→` `↑` `↓` | Move around the calendar |
+| `Enter` / `Space` | Play a release / pick a date |
+| `Shift` + `Enter` | Extend the date range |
+| `Home` / `End` | Jump across a calendar week |
+| `s` | Star the focused release |
+| `u` | Mark the focused release unseen |
+| `Esc` | Close the open player or dialog |
 
 
 ## Performance

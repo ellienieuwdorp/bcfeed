@@ -92,13 +92,13 @@ Keep this file safe – if you ever need to clear and re-load your credentials, 
 ### 7. Use the Credentials in This Application
 
 1. Open this application  
-2. Open **Settings → Email Configuration**
-3. Set **Provider** to **Gmail API (OAuth)**
-4. Click **Load credentials file** and choose the downloaded `client_secret_XXXX.json` file
+2. Open **Settings → Email connection**
+3. Set **How bcfeed reads your email** to **Google sign-in (Gmail only)**
+4. Click **Connect Gmail…** and choose the downloaded `client_secret_XXXX.json` file
 5. When prompted, continue with the Google sign-in flow in your browser
 6. You may see a warning saying **Google hasn’t verified this app**. If so, click **Advanced** and then **Go to bcfeed (unsafe)**.
 7. You will see a Google screen saying **bcfeed wants access to your Google Account**. Click **Continue**.
-8. The imported OAuth client details and your Gmail token will be stored securely in your system keychain so you will not need to log in again
+8. Your Google access file and Gmail sign-in are kept in your Mac's Keychain, so you will not need to log in again
 
 ---
 
@@ -126,7 +126,7 @@ Publishing the app to **In Production** fixes this.
 Make sure you enabled the Gmail API and used the downloaded OAuth file.
 
 **The app asked me to reconnect after an update.**
-**bcfeed** now asks for read-only access to Gmail instead of full access, so an authorization created by an older version is no longer used. Reconnect once via **Settings → Email Configuration → Load credentials** and the new read-only authorization is stored.
+**bcfeed** now asks for read-only access to Gmail instead of full access, so a sign-in created by an older version is no longer used. This is a one-time step: reconnect once via **Settings → Email connection → Connect Gmail…** and the new read-only sign-in is stored.
 
-**The app says secure credential storage is unavailable.**
-**bcfeed** stores imported Gmail OAuth material and Gmail tokens in the system keychain. Make sure your machine has a supported keychain backend available.
+**The app says it can't reach the Keychain.**
+**bcfeed** keeps your Google access file and Gmail sign-in in your Mac's Keychain (built into macOS). Make sure your Keychain is available, then try again.

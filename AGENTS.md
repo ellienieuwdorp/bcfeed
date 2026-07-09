@@ -39,7 +39,7 @@ Core principles (respect these in every change):
 ## Running for development
 
 ```bash
-# one-time setup (Python ≥3.10; Homebrew python works)
+# one-time setup (Python ≥3.11; Homebrew python works)
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 # run (opens browser; use --no-browser to skip)
 .venv/bin/python bcfeed.py --no-browser

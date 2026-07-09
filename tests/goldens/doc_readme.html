@@ -2,13 +2,15 @@
 <h2>Introduction</h2>
 <p><strong>bcfeed</strong> is a local macOS app that turns your Bandcamp &quot;New release from...&quot; notification emails into a browsable dashboard of releases.</p>
 <p>It works by searching your email account within a given date range for Bandcamp release notification emails, then saving the release details locally so you can sort, filter, and preview them.</p>
+<p><img src="docs/screenshots/readme-dashboard-light.png" alt="The bcfeed dashboard: a sortable table of releases with a calendar coverage map on the left." /></p>
 <p>You can connect either:</p>
 <ul>
 <li>a Gmail account using the Gmail API and your own Google access file</li>
 <li>any IMAP-compatible mailbox by entering the server details in the Settings panel</li>
 </ul>
 <h2>Setup</h2>
-<p>See <a href="setup" target="_blank" rel="noopener">SETUP.md</a> to install and run <strong>bcfeed</strong>. Once it's running, connect your email:</p>
+<p>See <a href="setup" target="_blank" rel="noopener">SETUP.md</a> to install and run <strong>bcfeed</strong>. The first time you launch it, a short checklist walks you through connecting your email:</p>
+<p><img src="docs/screenshots/readme-onboarding-light.png" alt="First-run checklist: choose Mail server (IMAP) or Google sign-in, connect it, then get your first releases." /></p>
 <ul>
 <li>Google sign-in (Gmail): <a href="setup-gmail" target="_blank" rel="noopener">GMAIL_SETUP.md</a></li>
 <li>Mail server (IMAP): <a href="setup-imap" target="_blank" rel="noopener">IMAP_SETUP.md</a></li>
@@ -33,6 +35,50 @@
 <p>You can turn on a small &quot;Saved&quot; tag next to releases whose player is ready (&quot;Show 'player ready' tags&quot; in Settings).</p>
 <p>The Settings panel at the top right lets you choose how bcfeed reads your email, connect or disconnect Gmail, enter your IMAP mail settings, and delete downloaded data.</p>
 <p>Your Gmail sign-in and IMAP password are kept in your Mac's Keychain.</p>
+<h2>Keyboard shortcuts</h2>
+<p><strong>bcfeed</strong> has a fast keyboard triage loop for working through releases. The same list is available in the app from the <strong>?</strong> button next to the table.</p>
+<table>
+<thead>
+<tr>
+<th>Keys</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>↑</code> <code>↓</code></td>
+<td>Move between releases</td>
+</tr>
+<tr>
+<td><code>←</code> <code>→</code> <code>↑</code> <code>↓</code></td>
+<td>Move around the calendar</td>
+</tr>
+<tr>
+<td><code>Enter</code> / <code>Space</code></td>
+<td>Play a release / pick a date</td>
+</tr>
+<tr>
+<td><code>Shift</code> + <code>Enter</code></td>
+<td>Extend the date range</td>
+</tr>
+<tr>
+<td><code>Home</code> / <code>End</code></td>
+<td>Jump across a calendar week</td>
+</tr>
+<tr>
+<td><code>s</code></td>
+<td>Star the focused release</td>
+</tr>
+<tr>
+<td><code>u</code></td>
+<td>Mark the focused release unseen</td>
+</tr>
+<tr>
+<td><code>Esc</code></td>
+<td>Close the open player or dialog</td>
+</tr>
+</tbody>
+</table>
 <h2>Performance</h2>
 <h3>Why are releases loading so slowly?</h3>
 <p>Make sure to read the bit above about loading players in the background.</p>

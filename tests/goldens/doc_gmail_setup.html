@@ -87,13 +87,13 @@ Since this OAuth client is used <strong>only by you</strong>, verification is <s
 <h3>7. Use the Credentials in This Application</h3>
 <ol>
 <li>Open this application</li>
-<li>Open <strong>Settings → Email Configuration</strong></li>
-<li>Set <strong>Provider</strong> to <strong>Gmail API (OAuth)</strong></li>
-<li>Click <strong>Load credentials file</strong> and choose the downloaded <code>client_secret_XXXX.json</code> file</li>
+<li>Open <strong>Settings → Email connection</strong></li>
+<li>Set <strong>How bcfeed reads your email</strong> to <strong>Google sign-in (Gmail only)</strong></li>
+<li>Click <strong>Connect Gmail…</strong> and choose the downloaded <code>client_secret_XXXX.json</code> file</li>
 <li>When prompted, continue with the Google sign-in flow in your browser</li>
 <li>You may see a warning saying <strong>Google hasn’t verified this app</strong>. If so, click <strong>Advanced</strong> and then <strong>Go to bcfeed (unsafe)</strong>.</li>
 <li>You will see a Google screen saying <strong>bcfeed wants access to your Google Account</strong>. Click <strong>Continue</strong>.</li>
-<li>The imported OAuth client details and your Gmail token will be stored securely in your system keychain so you will not need to log in again</li>
+<li>Your Google access file and Gmail sign-in are kept in your Mac's Keychain, so you will not need to log in again</li>
 </ol>
 <hr />
 <h2>Important small print</h2>
@@ -115,6 +115,6 @@ Publishing the app to <strong>In Production</strong> fixes this.</p>
 <p><strong>I get a 403 or insufficient permissions error.</strong><br />
 Make sure you enabled the Gmail API and used the downloaded OAuth file.</p>
 <p><strong>The app asked me to reconnect after an update.</strong>
-<strong>bcfeed</strong> now asks for read-only access to Gmail instead of full access, so an authorization created by an older version is no longer used. Reconnect once via <strong>Settings → Email Configuration → Load credentials</strong> and the new read-only authorization is stored.</p>
-<p><strong>The app says secure credential storage is unavailable.</strong>
-<strong>bcfeed</strong> stores imported Gmail OAuth material and Gmail tokens in the system keychain. Make sure your machine has a supported keychain backend available.</p>
+<strong>bcfeed</strong> now asks for read-only access to Gmail instead of full access, so a sign-in created by an older version is no longer used. This is a one-time step: reconnect once via <strong>Settings → Email connection → Connect Gmail…</strong> and the new read-only sign-in is stored.</p>
+<p><strong>The app says it can't reach the Keychain.</strong>
+<strong>bcfeed</strong> keeps your Google access file and Gmail sign-in in your Mac's Keychain (built into macOS). Make sure your Keychain is available, then try again.</p>

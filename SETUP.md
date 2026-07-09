@@ -51,8 +51,8 @@ You must keep the CLI process running in order to use **bcfeed**.
 
 Open **Settings → Email connection** after launching the app, then choose **How bcfeed reads your email**. **bcfeed** supports two ways to connect:
 
-- **Google sign-in (Gmail)**: recommended if your Bandcamp mail lives in Gmail and you do not mind creating your own Google access file. Access is read-only: the app can only read messages, never send, modify, or delete them.
-- **Mail server (IMAP)**: works with most email services, including Gmail, iCloud, Outlook, Fastmail, and other IMAP-compatible mailboxes.
+- **Google sign-in (Gmail)**: recommended if your Bandcamp mail lives in Gmail and you do not mind creating your own Google access file. Access is read-only: the app can only read messages, never send, modify, or delete them. If you used an older version of **bcfeed**, you will be asked to reconnect once, because it now requests read-only access instead of full access.
+- **Mail server (IMAP)**: works with most email services, including Gmail, iCloud, Outlook, Fastmail, and other IMAP-compatible mailboxes. bcfeed opens your mailbox read-only, so it can only read messages, never modify or delete them.
 
 Your Gmail sign-in and IMAP password are kept in your Mac's Keychain. The rest of your mail settings are stored locally in the app data directory.
 
