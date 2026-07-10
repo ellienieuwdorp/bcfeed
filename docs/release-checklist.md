@@ -146,10 +146,14 @@ risk R5):
   discovery (the macOS `keyring.backends.macOS` backend) — a missing keyring
   backend breaks all credential storage in the bundle.
 
-Confirm no secrets ride along:
+Confirm no secrets ride along — check for an actual bundled credential *file*,
+not the substring (the bundled setup docs/UI — `GMAIL_SETUP.md`,
+`dashboard.html`, `web/js/modals.js` — legitimately mention `client_secret_….json`
+as instructional text, so a plain `grep -rl "client_secret"` reports those three
+as expected false positives, never a real secret):
 
 ```bash
-grep -rl "client_secret" dist/bcfeed.app 2>/dev/null   # expect: no output
+find dist/bcfeed.app \( -name credentials.json -o -name 'client_secret*.json' \)   # expect: no output
 ```
 
 ---
