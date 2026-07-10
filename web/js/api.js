@@ -187,7 +187,45 @@ export async function checkServerAlive() {
   }
 }
 
+// --- Theme-aware player colours (WPX-B · UIP-9) -----------------------------
+// The Bandcamp EmbeddedPlayer is cross-origin, so CSS can't reach into it; the
+// only theming lever is its bgcol= / linkcol= path segments. We derive both from
+// the ACTIVE app theme at iframe-insertion time (applyEmbedTheme), so the same
+// embed URL — client-built here or server-derived on /releases — always matches
+// the surrounding surface. Hex values mirror the Calm Slate tokens in
+// dashboard.css (6-hex, no '#'):
+//   dark  (:root)            bgcol 171b23 (--surface)  linkcol 52d0ff (--accent)
+//   light (body.theme-light) bgcol ffffff (--surface)  linkcol 0b6e99 (--accent)
+const EMBED_THEME = {
+  dark: { bgcol: "171b23", linkcol: "52d0ff" },
+  light: { bgcol: "ffffff", linkcol: "0b6e99" },
+};
+
+export function currentEmbedTheme() {
+  const isLight =
+    typeof document !== "undefined" && document.body.classList.contains("theme-light");
+  return isLight ? EMBED_THEME.light : EMBED_THEME.dark;
+}
+
+// Rewrite (or, when absent, insert) the bgcol/linkcol path segments of any
+// Bandcamp EmbeddedPlayer URL for the current theme. transparent=true and every
+// other segment are left untouched. A non-embed URL is returned unchanged.
+export function applyEmbedTheme(url) {
+  if (!url || !url.includes("/EmbeddedPlayer/")) return url;
+  const { bgcol, linkcol } = currentEmbedTheme();
+  let out = url.includes("bgcol=")
+    ? url.replace(/bgcol=[^/]*/, `bgcol=${bgcol}`)
+    : url.replace("/EmbeddedPlayer/", `/EmbeddedPlayer/bgcol=${bgcol}/`);
+  out = out.includes("linkcol=")
+    ? out.replace(/linkcol=[^/]*/, `linkcol=${linkcol}`)
+    : out.replace("/EmbeddedPlayer/", `/EmbeddedPlayer/linkcol=${linkcol}/`);
+  return out;
+}
+
 // --- Bandcamp embed enrichment ---------------------------------------------
+// The client fallback builder stays theme-neutral on colour: applyEmbedTheme
+// owns bgcol/linkcol at insertion time, so the literals here are placeholders it
+// overwrites.
 function buildEmbedUrl(id, isTrack) {
   if (!id) return null;
   const kind = isTrack ? "track" : "album";

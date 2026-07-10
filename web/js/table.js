@@ -29,7 +29,7 @@ import {
   markVisibleRows,
 } from "./state.js";
 import { renderFilters, initFilters } from "./filters.js";
-import { ensureEmbed, persistViewedBatchRemote } from "./api.js";
+import { ensureEmbed, persistViewedBatchRemote, applyEmbedTheme } from "./api.js";
 import { showToast } from "./feedback.js";
 import { updateHeaderRange } from "./status.js";
 import {
@@ -79,6 +79,33 @@ export function closeOpenDetailRows() {
     row.setAttribute("aria-expanded", "false");
   });
   state.expandedKey = null;
+}
+
+// --- Theme-aware players (WPX-B · UIP-9) ------------------------------------
+// Open Bandcamp players can only follow a theme change by re-loading their src
+// with new bgcol/linkcol segments (api.applyEmbedTheme). We hook the theme flip
+// WITHOUT touching its owner (main.js writes body.theme-light; settings.js is
+// off-limits): a MutationObserver on <body>'s class list re-tints any open
+// detail-row iframe whenever theme-light toggles. This is the cleanest
+// non-invasive seam — no new event contract, no import into the toggle path.
+function retintOpenPlayers() {
+  document.querySelectorAll(".detail-row iframe").forEach((iframe) => {
+    const themed = safeHttpUrl(applyEmbedTheme(iframe.getAttribute("src")));
+    if (themed) iframe.setAttribute("src", themed);
+  });
+}
+
+let themeObserver = null;
+function observeThemeForPlayers() {
+  if (themeObserver || typeof MutationObserver === "undefined") return;
+  let wasLight = document.body.classList.contains("theme-light");
+  themeObserver = new MutationObserver(() => {
+    const isLight = document.body.classList.contains("theme-light");
+    if (isLight === wasLight) return;
+    wasLight = isLight;
+    retintOpenPlayers();
+  });
+  themeObserver.observe(document.body, { attributes: true, attributeFilter: ["class"] });
 }
 
 function createDetailRow() {
@@ -525,7 +552,9 @@ function expandRow(evt, tr, release, key) {
   // The table payload no longer carries description bodies (PERF-5): the expand
   // path asks /embed-meta for one (served from the cache).
   ensureEmbed(release, { withDescription: true }).then((embedUrl) => {
-    const safeEmbedUrl = safeHttpUrl(embedUrl);
+    // Theme the player to the active app theme at insertion time (WPX-B · UIP-9):
+    // Bandcamp can only be styled via its bgcol/linkcol URL segments.
+    const safeEmbedUrl = safeHttpUrl(applyEmbedTheme(embedUrl));
     if (!safeEmbedUrl) {
       // Failed / gone: the row glyph flips to "unavailable" and the detail row
       // offers the Bandcamp fallback (UXP-9). It is never auto-retried.
@@ -668,6 +697,7 @@ function attachTbodyDelegation() {
 export function initTable() {
   attachHeaderSorting();
   attachTbodyDelegation();
+  observeThemeForPlayers();
 
   if (hideViewedBtn) {
     hideViewedBtn.addEventListener("click", () => applyHideViewed(!state.hideViewed));
