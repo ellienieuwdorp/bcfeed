@@ -336,19 +336,18 @@
             </ol>
           </div>
         </section>
-        <!-- Table toolbar (WP-25 · UXP-16): mark-seen/unseen are TABLE actions,
-             not date-range actions, so they live here by the table with a live
-             count of the rows they affect; the count/filter status line and the
-             active-filter chip sit alongside. Hidden during onboarding. -->
+        <!-- Table toolbar (WP-25 · UXP-16, WPX-A/UIP-7a): mark-seen/unseen are
+             TABLE actions, not date-range actions, so they live here by the table
+             with a live count of the rows they affect. The count + sort status
+             line moved INTO the fixed-height activity strip (UIP-7a); only the
+             active-filter chip stays alongside the actions. A later package
+             relocates the mark actions. Hidden during onboarding. -->
         <div class="table-toolbar" id="table-toolbar">
           <div class="table-toolbar-actions">
             <button id="mark-seen" class="button button-compact">Mark as seen</button>
             <button id="mark-unseen" class="button button-compact">Mark as unseen</button>
           </div>
-          <div class="table-toolbar-status">
-            <span id="table-count" class="table-count detail-meta"></span>
-            <span id="filter-chip" class="filter-chip" hidden></span>
-          </div>
+          <span id="filter-chip" class="filter-chip" hidden></span>
         </div>
         <div class="table-wrapper">
           <table aria-label="Bandcamp releases">
@@ -409,12 +408,10 @@
              the keyboard hint, and a collapsed "Details" disclosure holding the
              raw streamed log for power users (empty + collapsed by default). -->
         <div class="activity-strip" id="activity-strip">
-          <div class="activity-status">
-            <svg class="activity-icon icon" id="activity-icon" aria-hidden="true" hidden>
-              <use href="#icon-loader"></use>
-            </svg>
-            <span class="activity-line" id="activity-line" aria-live="polite"></span>
-          </div>
+          <!-- Determinate/indeterminate progress is a thin edge-attached bar
+               overlaid on the strip's top edge (absolute, out of flow), NOT a
+               stacked row — so a run never changes the strip's height (WPX-A ·
+               UIP-1). -->
           <div class="activity-progress" id="activity-progress" hidden>
             <div
               class="progress-track"
@@ -427,88 +424,105 @@
               <span class="progress-fill" id="progress-fill"></span>
             </div>
           </div>
-          <div class="activity-meta">
-            <span id="activity-count" class="detail-meta count-label"></span>
-            <span class="activity-hint">↑↓ move · Enter play · s star · u unseen</span>
-            <!-- "?" help (WP-25 · UXP-12): lists EVERY implemented shortcut and
+          <!-- The single constant-height status line: state + plain-language
+               line on the left; the enrich chip and the count/sort + hint +
+               shortcuts + Details cluster on the right. Every conditional piece
+               swaps within this one row (visibility/inline), never a new row. -->
+          <div class="activity-strip-row">
+            <div class="activity-status">
+              <svg class="activity-icon icon" id="activity-icon" aria-hidden="true" hidden>
+                <use href="#icon-loader"></use>
+              </svg>
+              <span class="activity-line" id="activity-line" aria-live="polite"></span>
+            </div>
+            <!-- Enrichment chip (WP-24 · UXP-9, WPX-A/UIP-1): an INLINE segment of
+                 the single meta row — never its own stacked row. While the ambient
+                 queue loads Bandcamp players it shows aggregate progress + Pause;
+                 idle-with-pending it offers the low-key "Load all players"
+                 affordance. Hidden (display:none) when there is nothing to do; its
+                 content is shorter than the row so toggling it cannot change the
+                 strip's height. -->
+            <div class="enrich-chip" id="enrich-chip" role="status" aria-live="polite" hidden>
+              <svg class="icon enrich-chip-icon" id="enrich-chip-icon" aria-hidden="true">
+                <use href="#icon-loader"></use>
+              </svg>
+              <span class="enrich-chip-label" id="enrich-chip-label"></span>
+              <button type="button" id="enrich-pause" class="button button-compact" hidden>
+                Pause
+              </button>
+              <button type="button" id="enrich-load-all" class="button button-compact" hidden>
+                Load all players
+              </button>
+            </div>
+            <div class="activity-meta">
+              <span id="activity-count" class="detail-meta count-label"></span>
+              <span class="activity-hint">↑↓ move · Enter play · s star · u unseen</span>
+              <!-- "?" help (WP-25 · UXP-12): lists EVERY implemented shortcut and
                  nothing that isn't implemented. A <details> popover — keyboard
                  reachable, not a dialog (the dialog count stays at four). -->
-            <details class="shortcuts-help" id="shortcuts-help">
-              <summary
-                class="shortcuts-summary button button-icon-lg"
-                aria-label="Keyboard shortcuts"
-                title="Keyboard shortcuts"
+              <details class="shortcuts-help" id="shortcuts-help">
+                <summary
+                  class="shortcuts-summary button button-icon-lg"
+                  aria-label="Keyboard shortcuts"
+                  title="Keyboard shortcuts"
+                >
+                  <svg class="icon" aria-hidden="true"><use href="#icon-help-circle"></use></svg>
+                </summary>
+                <div class="shortcuts-panel" role="group" aria-label="Keyboard shortcuts">
+                  <div class="shortcuts-title">Keyboard shortcuts</div>
+                  <dl class="shortcuts-list">
+                    <div class="shortcut">
+                      <dt><kbd>↑</kbd><kbd>↓</kbd></dt>
+                      <dd>Move between releases</dd>
+                    </div>
+                    <div class="shortcut">
+                      <dt><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd></dt>
+                      <dd>Move around the calendar</dd>
+                    </div>
+                    <div class="shortcut">
+                      <dt><kbd>Enter</kbd><kbd>Space</kbd></dt>
+                      <dd>Play a release / pick a date</dd>
+                    </div>
+                    <div class="shortcut">
+                      <dt><kbd>Shift</kbd>+<kbd>Enter</kbd></dt>
+                      <dd>Extend the date range</dd>
+                    </div>
+                    <div class="shortcut">
+                      <dt><kbd>Home</kbd><kbd>End</kbd></dt>
+                      <dd>Jump across a calendar week</dd>
+                    </div>
+                    <div class="shortcut">
+                      <dt><kbd>s</kbd></dt>
+                      <dd>Star the focused release</dd>
+                    </div>
+                    <div class="shortcut">
+                      <dt><kbd>u</kbd></dt>
+                      <dd>Mark the focused release unseen</dd>
+                    </div>
+                    <div class="shortcut">
+                      <dt><kbd>Esc</kbd></dt>
+                      <dd>Close the open player or dialog</dd>
+                    </div>
+                  </dl>
+                </div>
+              </details>
+              <button
+                type="button"
+                id="status-toggle"
+                class="button activity-details-toggle"
+                aria-expanded="false"
+                aria-controls="populate-log"
               >
-                <svg class="icon" aria-hidden="true"><use href="#icon-help-circle"></use></svg>
-              </summary>
-              <div class="shortcuts-panel" role="group" aria-label="Keyboard shortcuts">
-                <div class="shortcuts-title">Keyboard shortcuts</div>
-                <dl class="shortcuts-list">
-                  <div class="shortcut">
-                    <dt><kbd>↑</kbd><kbd>↓</kbd></dt>
-                    <dd>Move between releases</dd>
-                  </div>
-                  <div class="shortcut">
-                    <dt><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd></dt>
-                    <dd>Move around the calendar</dd>
-                  </div>
-                  <div class="shortcut">
-                    <dt><kbd>Enter</kbd><kbd>Space</kbd></dt>
-                    <dd>Play a release / pick a date</dd>
-                  </div>
-                  <div class="shortcut">
-                    <dt><kbd>Shift</kbd>+<kbd>Enter</kbd></dt>
-                    <dd>Extend the date range</dd>
-                  </div>
-                  <div class="shortcut">
-                    <dt><kbd>Home</kbd><kbd>End</kbd></dt>
-                    <dd>Jump across a calendar week</dd>
-                  </div>
-                  <div class="shortcut">
-                    <dt><kbd>s</kbd></dt>
-                    <dd>Star the focused release</dd>
-                  </div>
-                  <div class="shortcut">
-                    <dt><kbd>u</kbd></dt>
-                    <dd>Mark the focused release unseen</dd>
-                  </div>
-                  <div class="shortcut">
-                    <dt><kbd>Esc</kbd></dt>
-                    <dd>Close the open player or dialog</dd>
-                  </div>
-                </dl>
-              </div>
-            </details>
-            <button
-              type="button"
-              id="status-toggle"
-              class="button activity-details-toggle"
-              aria-expanded="false"
-              aria-controls="populate-log"
-            >
-              Details
-              <svg class="status-carat icon" aria-hidden="true">
-                <use href="#icon-chevron-down"></use>
-              </svg>
-            </button>
+                Details
+                <svg class="status-carat icon" aria-hidden="true">
+                  <use href="#icon-chevron-down"></use>
+                </svg>
+              </button>
+            </div>
           </div>
+          <!-- The demoted raw log (Details). This is the ONLY element allowed to
+               change the strip's height — it expands below the single line. -->
           <div id="populate-log" class="activity-detail full-width" hidden></div>
-          <!-- Enrichment chip (WP-24 · UXP-9): while the ambient background
-               queue loads Bandcamp players it shows aggregate progress + a
-               Pause control; when idle-with-pending it offers the low-key
-               "Load all players" bulk affordance. Hidden when nothing to do. -->
-          <div class="enrich-chip" id="enrich-chip" role="status" aria-live="polite" hidden>
-            <svg class="icon enrich-chip-icon" id="enrich-chip-icon" aria-hidden="true">
-              <use href="#icon-loader"></use>
-            </svg>
-            <span class="enrich-chip-label" id="enrich-chip-label"></span>
-            <button type="button" id="enrich-pause" class="button button-compact" hidden>
-              Pause
-            </button>
-            <button type="button" id="enrich-load-all" class="button button-compact" hidden>
-              Load all players
-            </button>
-          </div>
         </div>
       </main>
     </div>

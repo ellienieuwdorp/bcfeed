@@ -47,7 +47,11 @@ const showStarredBtn = document.getElementById("show-starred-btn");
 const markSeenBtn = document.getElementById("mark-seen");
 const markUnseenBtn = document.getElementById("mark-unseen");
 const filterChip = document.getElementById("filter-chip");
-const tableCount = document.getElementById("table-count");
+// UIP-7a: the release count + sort indicator now lives in the fixed-height
+// activity strip's reserved meta slot (#activity-count), not the table toolbar.
+// This module is its single writer (via renderTable → updateTableStatus), so it
+// stays fresh on every load / sort / filter / mark / fetch-complete.
+const activityCount = document.getElementById("activity-count");
 const emptyTitle = document.getElementById("empty-state-title");
 const emptyAction = document.getElementById("empty-state-action");
 const showCachedToggle = document.getElementById("show-cached-toggle");
@@ -271,7 +275,7 @@ export function renderTable() {
   updateTableStatus(dateFiltered, sorted);
   updateMarkButtons(sorted.length);
   refreshSortIndicators();
-  updateHeaderRange(sorted.length);
+  updateHeaderRange();
 }
 
 // --- Empty states (WP-25 · UXP-14) ------------------------------------------
@@ -343,12 +347,12 @@ function updateEmptyState(dateFiltered, sorted) {
 // — fixing JS-4 by construction — plus a dismissible chip naming active filters.
 function updateTableStatus(dateFiltered, sorted) {
   const n = sorted.length;
-  if (tableCount) {
+  if (activityCount) {
     let text = `${n} release${n === 1 ? "" : "s"}`;
     if (n < dateFiltered.length) text += ` · filtered from ${dateFiltered.length}`;
     const arrow = state.direction === "asc" ? "↑" : "↓";
     text += ` · sorted by ${SORT_LABEL[state.sortKey] || state.sortKey} ${arrow}`;
-    tableCount.textContent = text;
+    activityCount.textContent = text;
   }
   updateFilterChip(dateFiltered);
 }

@@ -344,7 +344,10 @@ def test_count_filter_status_line_survives(page, app_server):
     )
 
     def count_text():
-        return (page.text_content("#table-count") or "").strip()
+        # UIP-7a: the release count + sort indicator now lives in the fixed-height
+        # activity strip's reserved meta slot, not the (removed) table-toolbar
+        # status line.
+        return (page.text_content("#activity-count") or "").strip()
 
     # load
     assert "2 releases" in count_text()

@@ -16,7 +16,6 @@ const loadingState = document.getElementById("loading-state");
 const errorState = document.getElementById("error-state");
 const populateLog = document.getElementById("populate-log");
 const headerRangeLabel = document.getElementById("header-range-label");
-const activityCount = document.getElementById("activity-count");
 
 const activityIcon = document.getElementById("activity-icon");
 const activityLine = document.getElementById("activity-line");
@@ -294,9 +293,7 @@ export function updateStatusForDateFilter() {
   updateSelectionStatusLog();
 }
 
-let lastShownCount = null;
-export function updateHeaderRange(count = null) {
-  if (count != null) lastShownCount = count;
+export function updateHeaderRange() {
   const fromVal = state.dateFilterFrom || "";
   const toVal = state.dateFilterTo || "";
   const start = fromVal || toVal;
@@ -310,14 +307,9 @@ export function updateHeaderRange(count = null) {
       headerRangeLabel.textContent = `Date range: ${start} to ${end}`;
     }
   }
-  if (activityCount) {
-    // The activity strip is the release count's ONLY home now, so an argless
-    // call (e.g. fetchScrapeStatus after load) must not blank it — reuse the
-    // last real value (JS-4 fixed by construction).
-    const shown = lastShownCount;
-    activityCount.textContent =
-      shown == null ? "" : `${shown} release${shown === 1 ? "" : "s"} shown`;
-  }
+  // The release count + sort indicator (#activity-count) is owned by table.js
+  // (updateTableStatus) now (UIP-7a) — this function no longer writes it, so the
+  // two never clobber each other.
 
   // The old "Preload release data" button is gone (WP-24 · UXP-8). Enrichment
   // is an ambient background queue (enrich.js); the aggregate chip shows its

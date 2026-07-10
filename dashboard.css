@@ -688,7 +688,11 @@ details[open] .panel-carat {
   color: var(--text-muted);
 }
 /* "Up to date" confirmation shown in place of a dead-end disabled button
-   (WP-24 · UXP-11); the primary control becomes "Check again" alongside it. */
+   (WP-24 · UXP-11); the primary control becomes "Check again" alongside it.
+   WPX-A · UIP-2: the line's slot is PERMANENTLY reserved — the hidden state only
+   turns its ink off (visibility) rather than removing the row — so the
+   .action-group height is pixel-identical across not-checked / checked /
+   partially-checked states. */
 .up-to-date-line {
   display: flex;
   align-items: center;
@@ -698,7 +702,7 @@ details[open] .panel-carat {
   color: var(--success-text);
 }
 .up-to-date-line[hidden] {
-  display: none;
+  visibility: hidden;
 }
 .up-to-date-line .icon {
   width: 14px;
@@ -1111,15 +1115,19 @@ tr.data-row:hover .row-dot.read {
   font-variant-numeric: tabular-nums;
 }
 
-/* Activity strip (WP-22 · UIR-22/23) — replaces the raw 200px Status LOG BOX.
-   One calm row: state icon + plain-language line, a determinate progress bar
-   during a run, the release count + keyboard hint, and a "Details" disclosure
-   holding the demoted raw log (collapsed + empty by default). */
+/* Activity strip (WP-22 · UIR-22/23, WPX-A · UIP-1) — replaces the raw 200px
+   Status LOG BOX. A CONSTANT-HEIGHT single line: state icon + plain-language
+   line, the enrich chip inline, and the release count/sort + keyboard hint +
+   "Details" disclosure. The progress bar is a thin edge-attached overlay (out of
+   flow); the enrich chip is an inline segment; every conditional element swaps
+   in place. Only the Details log (#populate-log) may change the strip's height,
+   expanding below the line. The strip is `position: relative` so the progress
+   overlay anchors to its top edge. */
 .activity-strip {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: var(--space-2) var(--space-3);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
@@ -1127,11 +1135,21 @@ tr.data-row:hover .row-dot.read {
   margin-top: var(--space-3);
   flex-shrink: 0;
 }
+/* The single constant-height status line. Nowrap keeps it to one row so no
+   conditional element can wrap it taller; the status text truncates instead. */
+.activity-strip-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  flex-wrap: nowrap;
+}
 .activity-status {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
+  flex: 1 1 auto;
 }
 .activity-icon {
   width: 16px;
@@ -1161,18 +1179,30 @@ tr.data-row:hover .row-dot.read {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A thin (3px) determinate/indeterminate bar attached to the strip's top edge,
+   overlaid absolutely so a run never adds a row / changes the strip height
+   (WPX-A · UIP-1). Spans the full inner width; rounded to match the strip's top
+   corners. */
 .activity-progress {
-  grid-column: 1 / -1;
-  min-width: 0;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  z-index: 1;
+  border-top-left-radius: var(--radius-md);
+  border-top-right-radius: var(--radius-md);
+  overflow: hidden;
+}
+.activity-progress[hidden] {
+  display: none;
 }
 /* Progress: fill is text-muted, NOT accent — progress is not "new music", so
    the accent stays a learnable signal (Stockbook graft, UIR-22). */
 .progress-track {
   position: relative;
-  height: 4px;
+  height: 3px;
   width: 100%;
-  max-width: 220px;
-  border-radius: var(--radius-full);
   background: var(--surface-inset);
   overflow: hidden;
 }
@@ -1193,7 +1223,8 @@ tr.data-row:hover .row-dot.read {
   align-items: center;
   gap: var(--space-3);
   justify-content: flex-end;
-  flex-wrap: wrap;
+  flex: none;
+  flex-wrap: nowrap;
 }
 .activity-hint {
   font-size: var(--text-xs);
@@ -1216,7 +1247,6 @@ tr.data-row:hover .row-dot.read {
   display: inline-block;
 }
 .activity-detail {
-  grid-column: 1 / -1;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: var(--space-2);
@@ -1237,13 +1267,15 @@ tr.data-row:hover .row-dot.read {
   font-variant-numeric: tabular-nums;
 }
 
-/* Enrichment chip (WP-24 · UXP-9): aggregate queue progress + Pause, and the
-   low-key "Load all players" bulk affordance. Spans the strip's full width. */
+/* Enrichment chip (WP-24 · UXP-9, WPX-A · UIP-1): aggregate queue progress +
+   Pause, and the low-key "Load all players" bulk affordance. An INLINE segment
+   of the single meta row (flex: none) — its content is shorter than the row, so
+   showing/hiding it never changes the strip's height. */
 .enrich-chip {
-  grid-column: 1 / -1;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: var(--space-2);
+  flex: none;
   font-size: var(--text-xs);
   color: var(--text-muted);
 }
@@ -1507,19 +1539,6 @@ body.is-offline #mark-unseen {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-}
-.table-toolbar-status {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-  min-width: 0;
-}
-.table-count {
-  font-size: var(--text-xs);
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
 .filter-chip {
   display: inline-flex;
