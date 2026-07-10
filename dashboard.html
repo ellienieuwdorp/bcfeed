@@ -536,30 +536,74 @@
           </button>
         </div>
 
-        <div class="settings-content-scroll">
-          <!-- Appearance Section -->
-          <div class="settings-section">
-            <div class="micro-label">Appearance</div>
+        <div class="settings-tablist" role="tablist" aria-label="Settings sections">
+          <button
+            class="settings-tab"
+            id="settings-tab-appearance"
+            role="tab"
+            aria-selected="true"
+            aria-controls="settings-tabpanel-appearance"
+          >
+            Appearance
+          </button>
+          <button
+            class="settings-tab"
+            id="settings-tab-connection"
+            role="tab"
+            aria-selected="false"
+            aria-controls="settings-tabpanel-connection"
+            tabindex="-1"
+          >
+            Email connection
+          </button>
+          <button
+            class="settings-tab"
+            id="settings-tab-advanced"
+            role="tab"
+            aria-selected="false"
+            aria-controls="settings-tabpanel-advanced"
+            tabindex="-1"
+          >
+            Advanced
+          </button>
+        </div>
+
+        <div class="settings-tabpanels">
+          <!-- Appearance tab -->
+          <div
+            class="settings-tabpanel"
+            id="settings-tabpanel-appearance"
+            role="tabpanel"
+            aria-labelledby="settings-tab-appearance"
+            tabindex="0"
+          >
             <div class="settings-group">
               <div class="settings-row">
                 <input type="checkbox" id="theme-toggle" class="filter-checkbox show" />
                 <label for="theme-toggle">Dark mode</label>
               </div>
-              <div class="settings-row dev-setting">
-                <input type="checkbox" id="show-cached-toggle" class="filter-checkbox show" />
-                <label for="show-cached-toggle">Show 'player ready' tags</label>
-              </div>
             </div>
           </div>
 
-          <!-- Provider Section -->
-          <div class="settings-section">
-            <div class="micro-label">Email connection</div>
+          <!-- Email connection tab -->
+          <div
+            class="settings-tabpanel"
+            id="settings-tabpanel-connection"
+            role="tabpanel"
+            aria-labelledby="settings-tab-connection"
+            tabindex="0"
+            hidden
+          >
             <div class="settings-group">
               <div id="settings-connection-status" class="connection-status" aria-live="polite">
                 <span class="connection-dot" aria-hidden="true"></span>
                 <span class="connection-text">Checking your connection…</span>
               </div>
+              <div
+                id="settings-connection-preview"
+                class="connection-preview"
+                aria-live="polite"
+              ></div>
               <div>
                 <label for="provider-select" class="form-label">How bcfeed reads your email</label>
                 <select id="provider-select" class="form-select">
@@ -584,6 +628,12 @@
                     accept="application/json"
                     class="hidden"
                   />
+                </div>
+                <div class="settings-actions gmail-use-row">
+                  <button id="gmail-use-btn" class="button button-primary" disabled>
+                    Use Google sign-in for new releases
+                  </button>
+                  <div id="gmail-use-status" class="help-text imap-status-text"></div>
                 </div>
                 <div class="settings-subsection">
                   <a
@@ -715,25 +765,46 @@
             </div>
           </div>
 
-          <!-- Data Section (danger zone) -->
-          <div class="settings-section settings-section-danger">
-            <div class="micro-label micro-label-danger">Danger zone</div>
-            <div class="settings-group">
-              <div class="settings-note">
-                Delete the releases and players bcfeed has downloaded. Your connection stays set up.
-              </div>
-              <div class="settings-actions">
-                <button id="settings-reset" class="button button-danger">
-                  Delete downloaded data…
-                </button>
+          <!-- Advanced tab -->
+          <div
+            class="settings-tabpanel"
+            id="settings-tabpanel-advanced"
+            role="tabpanel"
+            aria-labelledby="settings-tab-advanced"
+            tabindex="0"
+            hidden
+          >
+            <div class="settings-section dev-setting">
+              <div class="micro-label">Display</div>
+              <div class="settings-group">
+                <div class="settings-row">
+                  <input type="checkbox" id="show-cached-toggle" class="filter-checkbox show" />
+                  <label for="show-cached-toggle">Show 'player ready' tags</label>
+                </div>
               </div>
             </div>
-          </div>
 
-          <!-- About Section -->
-          <div class="settings-section">
-            <div class="micro-label">About</div>
-            <div id="about-version" class="settings-note">bcfeed</div>
+            <!-- Data (danger zone) -->
+            <div class="settings-section settings-section-danger">
+              <div class="micro-label micro-label-danger">Danger zone</div>
+              <div class="settings-group">
+                <div class="settings-note">
+                  Delete the releases and players bcfeed has downloaded. Your connection stays set
+                  up.
+                </div>
+                <div class="settings-actions">
+                  <button id="settings-reset" class="button button-danger">
+                    Delete downloaded data…
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- About -->
+            <div class="settings-section">
+              <div class="micro-label">About</div>
+              <div id="about-version" class="settings-note">bcfeed</div>
+            </div>
           </div>
         </div>
       </div>

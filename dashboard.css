@@ -1667,6 +1667,12 @@ body.is-offline #mark-unseen {
   width: 100%;
   min-width: 280px;
   max-width: 540px;
+  /* Fixed geometry (UIP-10): a constant box across all three tabs and every
+     state within a tab. The tallest pane (Email connection → IMAP) fits without
+     crowding; overflow scrolls inside .settings-tabpanels, never resizing the
+     dialog. */
+  height: 620px;
+  max-height: 90vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1696,10 +1702,44 @@ body.is-offline #mark-unseen {
   background: var(--control-bg-hover);
   color: var(--text);
 }
-.settings-content-scroll {
-  padding: var(--space-5);
+/* ===== Settings tabs (UIP-10) ===== */
+.settings-tablist {
+  display: flex;
+  gap: var(--space-1);
+  padding: 0 var(--space-5);
+  background: var(--surface-inset);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.settings-tab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: var(--space-3) var(--space-2);
+  margin-bottom: -1px;
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color var(--transition-fast);
+}
+.settings-tab:hover {
+  color: var(--text);
+}
+.settings-tab[aria-selected="true"] {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.settings-tabpanels {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
-  max-height: 75vh;
+  padding: var(--space-5);
+}
+.settings-tabpanel[hidden] {
+  display: none;
 }
 .settings-section {
   margin-bottom: var(--space-6);
@@ -1993,6 +2033,21 @@ body.is-offline #mark-unseen {
 }
 .connection-status.is-disconnected .connection-text {
   color: var(--text-muted);
+}
+/* Reserved slot for the previewed-vs-active note (UIP-10): always occupies its
+   space so committing/reverting a preview never nudges the panel. */
+.connection-preview {
+  min-height: calc(2 * 1.4em);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  color: var(--warn-text);
+  visibility: hidden;
+}
+.connection-preview.is-visible {
+  visibility: visible;
+}
+.gmail-use-row {
+  margin-top: var(--space-3);
 }
 .micro-label-danger {
   color: var(--danger-text);

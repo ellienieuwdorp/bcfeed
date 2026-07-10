@@ -75,6 +75,11 @@ def _app(data_dir: Path):
     port = _free_port()
     env = dict(os.environ)
     env["BCFEED_DATA_DIR"] = str(data_dir)
+    # The system Keychain is shared across data dirs, so a developer's real IMAP
+    # password would leak into a "fresh" temp dir and push onboarding past the
+    # provider-choice step. Force keyring's null backend so has_imap_password()
+    # is hermetic (always empty) and the real Keychain is never read or written.
+    env["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
     proc = subprocess.Popen(
         [APP_PYTHON, "bcfeed.py", "--no-browser", "--port", str(port)],
         cwd=str(REPO_ROOT),
@@ -510,11 +515,14 @@ def test_delete_data_dialog_keeps_stars_by_default(seeded_page):
         arg=row,
     )
 
-    # Open the confirm dialog from Settings.
+    # Open the confirm dialog from Settings → Advanced tab (UIP-10: the danger
+    # zone lives in Advanced now).
     page.click("#settings-btn")
     page.wait_for_function(
         "() => getComputedStyle(document.getElementById('settings-backdrop')).display !== 'none'"
     )
+    page.click("#settings-tab-advanced")
+    page.wait_for_selector("#settings-tabpanel-advanced:not([hidden])")
     assert "button-danger" in page.get_attribute("#settings-reset", "class")
     page.click("#settings-reset")
     page.wait_for_function(
@@ -575,8 +583,12 @@ def test_settings_shows_connection_state_without_action(seeded_page):
     page.wait_for_function(
         "() => getComputedStyle(document.getElementById('settings-backdrop')).display !== 'none'"
     )
-    # The connection-status line is first in the Email section and reflects state
-    # with NO action taken (this dir has no provider configured → Not connected).
+    # Open the Email connection tab (UIP-10: sections are tabs now).
+    page.click("#settings-tab-connection")
+    page.wait_for_selector("#settings-tabpanel-connection:not([hidden])")
+
+    # The active-connection line reflects state with NO action taken (this dir
+    # has no connection configured → Not connected).
     status_text = page.eval_on_selector(
         "#settings-connection-status .connection-text", "e => e.textContent.trim()"
     )
@@ -585,10 +597,80 @@ def test_settings_shows_connection_state_without_action(seeded_page):
         "#settings-connection-status", "e => e.classList.contains('is-disconnected')"
     )
 
-    # Switching the provider select updates the per-provider status line.
+    # Previewing the mail server in the dropdown must NOT change the active line;
+    # a reserved preview note appears, naming the switch and its re-check (UIP-10).
     page.select_option("#provider-select", "imap")
-    page.wait_for_timeout(150)
-    imap_status = page.eval_on_selector(
+    page.wait_for_function(
+        "() => document.getElementById('settings-connection-preview')"
+        ".classList.contains('is-visible')"
+    )
+    active_line = page.eval_on_selector(
         "#settings-connection-status .connection-text", "e => e.textContent.trim()"
     )
-    assert "Not connected" in imap_status, imap_status
+    assert "Not connected" in active_line, active_line
+    preview = page.eval_on_selector("#settings-connection-preview", "e => e.textContent").lower()
+    assert "previewing your mail server" in preview, preview
+    assert "re-checks" in preview, preview
+
+
+def test_settings_tabs_fixed_geometry_and_explicit_save(seeded_page):
+    """The dialog box is pixel-constant across tabs and provider-pane switches,
+    and selecting a connection in the dropdown mutates nothing (UIP-10)."""
+    page, base, seed = seeded_page
+
+    posts = {"provider_config": 0}
+
+    def _count(req):
+        if req.method == "POST" and req.url.rstrip("/").endswith("/provider-config"):
+            posts["provider_config"] += 1
+
+    page.on("request", _count)
+
+    page.goto(f"{base}/dashboard")
+    page.wait_for_selector("#release-rows tr.data-row")
+    page.click("#settings-btn")
+    page.wait_for_function(
+        "() => getComputedStyle(document.getElementById('settings-backdrop')).display !== 'none'"
+    )
+
+    def rect():
+        return page.eval_on_selector(
+            "#settings-backdrop .settings-panel",
+            "e => { const r = e.getBoundingClientRect(); return {w: r.width, h: r.height}; }",
+        )
+
+    base_rect = rect()
+    # (1) Identical across all three tabs.
+    for tab in ("appearance", "connection", "advanced"):
+        page.click(f"#settings-tab-{tab}")
+        page.wait_for_selector(f"#settings-tabpanel-{tab}:not([hidden])")
+        r = rect()
+        assert abs(r["h"] - base_rect["h"]) < 0.5 and abs(r["w"] - base_rect["w"]) < 0.5, (
+            tab,
+            r,
+            base_rect,
+        )
+
+    # (2) Identical across provider-pane switches inside the Email connection tab.
+    page.click("#settings-tab-connection")
+    page.wait_for_selector("#settings-tabpanel-connection:not([hidden])")
+    r_gmail = rect()
+    page.select_option("#provider-select", "imap")
+    page.wait_for_selector("#imap-config-panel", state="visible")
+    r_imap = rect()
+    page.select_option("#provider-select", "gmail")
+    page.wait_for_selector("#gmail-config-panel", state="visible")
+    r_gmail2 = rect()
+    for label, r in (("imap", r_imap), ("gmail-again", r_gmail2)):
+        assert abs(r["h"] - r_gmail["h"]) < 0.5 and abs(r["w"] - r_gmail["w"]) < 0.5, (
+            label,
+            r,
+            r_gmail,
+        )
+
+    # (3) Selecting a connection in the dropdown NEVER POSTs /provider-config.
+    assert posts["provider_config"] == 0, posts
+
+    # The Gmail "Use" switch stays disabled without a connected Gmail, so the
+    # dropdown can't accidentally switch the live connection.
+    assert page.eval_on_selector("#gmail-use-btn", "e => e.disabled") is True

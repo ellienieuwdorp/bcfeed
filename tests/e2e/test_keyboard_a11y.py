@@ -193,6 +193,40 @@ def test_keyboard_settings_dialog_focus_trap(page, app_server, seed_data):
     assert _active(page)["id"] == "settings-btn", _active(page)
 
 
+def test_settings_tabs_keyboard(page, app_server, seed_data):
+    page.goto(f"{app_server}/dashboard")
+    page.wait_for_selector("#release-rows tr.data-row")
+    _dismiss_startup_modal(page)
+
+    _focus(page, "#settings-btn")
+    page.keyboard.press("Enter")
+    page.wait_for_function(
+        "() => getComputedStyle(document.getElementById('settings-backdrop')).display !== 'none'"
+    )
+
+    # A real role=tablist with three tabs (UIP-10).
+    assert page.get_attribute("#settings-backdrop [role='tablist']", "role") == "tablist"
+    assert page.eval_on_selector_all("#settings-backdrop [role='tab']", "els => els.length") == 3
+    # One roving tab stop; Appearance selected + shown by default, others hidden.
+    roving = page.eval_on_selector_all(
+        "#settings-backdrop [role='tab']", "els => els.filter(e => e.tabIndex === 0).length"
+    )
+    assert roving == 1, roving
+    assert page.get_attribute("#settings-tab-appearance", "aria-selected") == "true"
+    assert page.get_attribute("#settings-tabpanel-connection", "hidden") is not None
+
+    # Arrow keys move selection with automatic activation (panel follows).
+    _focus(page, "#settings-tab-appearance")
+    page.keyboard.press("ArrowRight")
+    assert page.get_attribute("#settings-tab-connection", "aria-selected") == "true"
+    assert page.get_attribute("#settings-tabpanel-connection", "hidden") is None
+    assert page.get_attribute("#settings-tabpanel-appearance", "hidden") is not None
+    page.keyboard.press("End")
+    assert page.get_attribute("#settings-tab-advanced", "aria-selected") == "true"
+    page.keyboard.press("Home")
+    assert page.get_attribute("#settings-tab-appearance", "aria-selected") == "true"
+
+
 def test_keyboard_row_triage(page, app_server, seed_data):
     url_a = seed_data["url_a"]
     page.goto(f"{app_server}/dashboard")

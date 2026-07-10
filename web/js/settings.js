@@ -12,8 +12,12 @@ import { fetchScrapeStatus } from "./calendar.js";
 import { toggleSettings, registerDialog, openDialog, closeDialog } from "./modals.js";
 import { showBanner, showToast } from "./feedback.js";
 
+const settingsBackdrop = document.getElementById("settings-backdrop");
 const providerSelect = document.getElementById("provider-select");
 const connectionStatusEl = document.getElementById("settings-connection-status");
+const connectionPreviewEl = document.getElementById("settings-connection-preview");
+const gmailUseBtn = document.getElementById("gmail-use-btn");
+const gmailUseStatus = document.getElementById("gmail-use-status");
 const gmailConfigPanel = document.getElementById("gmail-config-panel");
 const imapConfigPanel = document.getElementById("imap-config-panel");
 const imapHost = document.getElementById("imap-host");
@@ -270,30 +274,101 @@ export function updateImapConfigVisibility() {
 }
 
 // The last provider config fetched from the server, used to render the
-// connection-status line at the top of the Email connection section (UXP-5).
+// connection-status line at the top of the Email connection tab (UXP-5). Its
+// stored provider is the ACTIVE connection bcfeed fetches with; the dropdown's
+// value is only the PREVIEWED one until an explicit Use/Save action (UIP-10).
 let lastProviderConfig = null;
 
-// Per-provider connection state shown first in Settings, with no action needed.
-// Gmail uses /provider-config's has_gmail_credentials; IMAP uses has_password
-// plus a complete host/username/folder.
+function connectionName(provider) {
+  return provider === "imap" ? "your mail server" : "Google sign-in";
+}
+
+// One plain sentence shown when the dropdown previews a connection that is not
+// the active one: names both, says what commits the switch, and warns that
+// switching re-checks recent coverage (UIP-10).
+function previewSentence(previewed, active) {
+  const commit = previewed === "imap" ? "save your mail settings" : "use it for new releases";
+  return (
+    `You're previewing ${connectionName(previewed)}. bcfeed keeps using ` +
+    `${connectionName(active)} until you ${commit} — switching re-checks your recent dates.`
+  );
+}
+
+// The explicit "Use Google sign-in" button only makes sense once Gmail is
+// connected AND it isn't already the active connection.
+function syncGmailUi() {
+  if (!gmailUseBtn) return;
+  const cfg = lastProviderConfig || {};
+  const activeProvider = cfg.provider || "gmail";
+  const gmailConnected = !!cfg.has_gmail_credentials;
+  const alreadyActive = activeProvider === "gmail";
+  gmailUseBtn.disabled = !gmailConnected || alreadyActive;
+  gmailUseBtn.title = !gmailConnected
+    ? "Connect Gmail first, then you can use it for new releases."
+    : alreadyActive
+      ? "bcfeed already uses Google sign-in for new releases."
+      : "";
+}
+
+// The connection-status line reflects the ACTIVE connection; a second reserved
+// line calls out a previewed-but-uncommitted switch. Gmail uses
+// /provider-config's has_gmail_credentials; IMAP uses has_password plus a
+// complete host/username/folder.
 function updateConnectionStatus() {
   if (!connectionStatusEl) return;
   const cfg = lastProviderConfig || {};
-  const provider = providerSelect ? providerSelect.value : cfg.provider || "gmail";
+  const activeProvider = cfg.provider || "gmail";
+  const previewed = providerSelect ? providerSelect.value : activeProvider;
   const imap = cfg.imap_config || {};
-  let connected = false;
-  let text = "Not connected yet.";
-  if (provider === "imap") {
-    connected = !!(imap.host && imap.username && imap.has_password && imap.folder);
-    text = connected ? "Connected to your mail server." : "Not connected yet.";
+  const gmailConnected = !!cfg.has_gmail_credentials;
+  const imapConnected = !!(imap.host && imap.username && imap.has_password && imap.folder);
+  const activeConnected = activeProvider === "imap" ? imapConnected : gmailConnected;
+
+  let text;
+  if (activeProvider === "imap") {
+    text = imapConnected ? "Using your mail server for new releases." : "Not connected yet.";
   } else {
-    connected = !!cfg.has_gmail_credentials;
-    text = connected ? "Gmail is connected." : "Not connected yet.";
+    text = gmailConnected ? "Using Google sign-in for new releases." : "Not connected yet.";
   }
-  connectionStatusEl.classList.toggle("is-connected", connected);
-  connectionStatusEl.classList.toggle("is-disconnected", !connected);
+  connectionStatusEl.classList.toggle("is-connected", activeConnected);
+  connectionStatusEl.classList.toggle("is-disconnected", !activeConnected);
   const textEl = connectionStatusEl.querySelector(".connection-text");
   if (textEl) textEl.textContent = text;
+
+  if (connectionPreviewEl) {
+    const previewing = previewed !== activeProvider;
+    connectionPreviewEl.textContent = previewing ? previewSentence(previewed, activeProvider) : "";
+    connectionPreviewEl.classList.toggle("is-visible", previewing);
+  }
+  syncGmailUi();
+}
+
+function isSettingsDialogOpen() {
+  return !!(settingsBackdrop && settingsBackdrop.style.display === "flex");
+}
+
+// Explicitly switch the ACTIVE connection to Gmail. This is the only Settings
+// path (besides the IMAP Save button) that mutates the live connection — the
+// dropdown itself never does (UIP-10, the auto-save-on-change incident).
+async function useGmailForFetching() {
+  if (!endpoints.apiRoot) return;
+  if (gmailUseBtn) gmailUseBtn.disabled = true;
+  try {
+    const resp = await fetch(`${endpoints.apiRoot}/provider-config`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: "gmail" }),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    lastProviderConfig = { ...(lastProviderConfig || {}), provider: "gmail" };
+    updateConnectionStatus();
+    setStatus(gmailUseStatus, "Now using Google sign-in for new releases.", "success");
+    document.dispatchEvent(new CustomEvent("bcfeed:connection-changed"));
+  } catch (e) {
+    setStatus(gmailUseStatus, "Couldn't switch to Google sign-in. Try again.", "error");
+  } finally {
+    syncGmailUi();
+  }
 }
 
 async function loadProviderConfig() {
@@ -506,25 +581,74 @@ function renderAboutVersion() {
   el.textContent = version ? `bcfeed v${version}` : "bcfeed";
 }
 
+// Tabbed sections inside the Settings dialog (UIP-10). A real
+// role=tablist/tab/tabpanel set with roving tabindex + arrow-key/Home/End
+// support; moving focus activates the tab (automatic activation). Panel
+// geometry is fixed in CSS, so switching tabs never resizes the dialog.
+const SETTINGS_TABS = [
+  { tab: "settings-tab-appearance", panel: "settings-tabpanel-appearance" },
+  { tab: "settings-tab-connection", panel: "settings-tabpanel-connection" },
+  { tab: "settings-tab-advanced", panel: "settings-tabpanel-advanced" },
+];
+
+function initSettingsTabs() {
+  const tabEls = SETTINGS_TABS.map((t) => document.getElementById(t.tab));
+  const panelEls = SETTINGS_TABS.map((t) => document.getElementById(t.panel));
+  if (tabEls.some((el) => !el) || panelEls.some((el) => !el)) return;
+
+  function activate(index, { focus = true } = {}) {
+    tabEls.forEach((tabEl, i) => {
+      const selected = i === index;
+      tabEl.setAttribute("aria-selected", selected ? "true" : "false");
+      tabEl.tabIndex = selected ? 0 : -1;
+      panelEls[i].hidden = !selected;
+    });
+    if (focus) tabEls[index].focus();
+  }
+
+  tabEls.forEach((tabEl, i) => {
+    tabEl.addEventListener("click", () => activate(i, { focus: false }));
+    tabEl.addEventListener("keydown", (e) => {
+      let next = null;
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (i + 1) % tabEls.length;
+      else if (e.key === "ArrowLeft" || e.key === "ArrowUp")
+        next = (i - 1 + tabEls.length) % tabEls.length;
+      else if (e.key === "Home") next = 0;
+      else if (e.key === "End") next = tabEls.length - 1;
+      if (next === null) return;
+      e.preventDefault();
+      activate(next);
+    });
+  });
+}
+
 // Wire the provider controller + reset button; called once by main.js.
 export function initSettings() {
   renderAboutVersion();
+  initSettingsTabs();
   if (providerSelect) {
     providerSelect.addEventListener("change", () => {
       updateImapConfigVisibility();
       updateConnectionStatus();
-      if (providerSelect.value === "gmail") {
-        saveProviderType();
-      } else {
+      setStatus(imapSaveStatus, "");
+      if (providerSelect.value === "imap") {
         setStatus(
           imapDiscoverStatus,
           "Load folders and save your mail settings to finish switching.",
         );
-        setStatus(imapSaveStatus, "");
         maybeAutoDiscoverImapFolders();
+      } else if (!isSettingsDialogOpen()) {
+        // Onboarding drives this same select while the Settings dialog is
+        // CLOSED and relies on the Gmail choice persisting (onboarding.js
+        // re-hosts the IMAP panel + reuses this select). Inside the OPEN
+        // Settings dialog a Gmail selection is a PREVIEW only — the active
+        // connection changes solely via the explicit "Use Google sign-in"
+        // button (UIP-10, no auto-save-on-change).
+        saveProviderType();
       }
     });
   }
+  if (gmailUseBtn) gmailUseBtn.addEventListener("click", useGmailForFetching);
   [imapHost, imapPort, imapUser, imapPass, imapSsl].forEach((input) => {
     if (!input) return;
     const eventName = input === imapSsl ? "change" : "input";
