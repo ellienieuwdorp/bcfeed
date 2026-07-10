@@ -1,6 +1,6 @@
 # bcfeed — Master implementation plan
 
-Date: 2026-07-05 · Baseline commit: **e363bf4** · Status: approved plan, **no plan-scoped code changes yet**.
+Date: 2026-07-05 · Baseline commit: 598a9dd (re-baselined e363bf4) · Status: **EXECUTED 2026-07-05 → 2026-07-10** — all 31 automatable WPs landed as per-WP commits (WP-01..WP-30; WP-31 SQLite remains the maintainer decision gate). Final state: 346 unit + 39 e2e tests green. Maintainer-gated residuals: tag v1.1.0 + push, Homebrew tap formula regen, clean-account Gatekeeper test, real-account Gmail re-auth walkthrough — see docs/release-checklist.md.
 
 > **Re-baselined 2026-07-05.** The audit ran at `598a9dd`; the repo then merged the IMAP-provider PR
 > and fast-forwarded to `e363bf4` (+2724/−464 across 21 files: email-provider abstraction —
